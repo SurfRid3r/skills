@@ -3,13 +3,13 @@
 TickTick Skill CLI - 统一命令行接口
 
 使用方法：
-    uv run ticktick.py <category> <action> [options]
+    python scripts/ticktick.py <category> <action> [options]
 
 示例：
-    uv run ticktick.py tasks list --project-name "工作"
-    uv run ticktick.py tasks create --title "完成报告" --project-name "工作" --priority high
-    uv run ticktick.py projects list
-    uv run ticktick.py tags list
+    python scripts/ticktick.py tasks list --project-id "63946e00f7244412354e4c9c"
+    python scripts/ticktick.py tasks create --title "完成报告" --project-id "63946e00f7244412354e4c9c" --priority high
+    python scripts/ticktick.py projects list
+    python scripts/ticktick.py tags list
 """
 
 import asyncio
@@ -43,24 +43,6 @@ class TickTickCLI:
         if not self.auth:
             self.auth = WebAuth()
             await self.auth.ensure_authenticated()
-
-    async def _resolve_project_id(self, project_service, project_id=None, project_name=None):
-        """Resolve project ID from either ID or name.
-
-        Returns None if neither is provided or if project is not found.
-        """
-        if project_id:
-            return project_id
-
-        if not project_name:
-            return None
-
-        projects = await project_service.get_all()
-        for project in projects:
-            if project.get('name') == project_name:
-                return project['id']
-
-        return None
 
     @staticmethod
     def _parse_priority(priority_str):
@@ -135,39 +117,28 @@ class TickTickCLI:
     async def tasks_list(self, args):
         """列出任务"""
         await self.ensure_auth()
-        task_service = TaskService(self.auth)
-        project_service = ProjectService(self.auth)
+        service = TaskService(self.auth)
 
         try:
-            project_id = await self._resolve_project_id(project_service, args.project_id, args.project_name)
-
-            if project_id:
-                tasks = await task_service.list_in_project(project_id)
+            if args.project_id:
+                tasks = await service.list_in_project(args.project_id)
             else:
-                tasks = await task_service.get_all()
+                tasks = await service.get_all()
 
             self._print_tasks(tasks)
         finally:
-            await task_service.close()
-            await project_service.close()
+            await service.close()
     
     async def tasks_create(self, args):
         """创建任务"""
         await self.ensure_auth()
-        task_service = TaskService(self.auth)
-        project_service = ProjectService(self.auth)
+        service = TaskService(self.auth)
 
         try:
-            project_id = await self._resolve_project_id(project_service, args.project_id, args.project_name)
-
-            if not project_id:
-                print("❌ 错误: 必须指定项目ID或项目名称")
-                return
-
             priority = self._parse_priority(args.priority)
 
-            task = await task_service.create(
-                project_id=project_id,
+            task = await service.create(
+                project_id=args.project_id,
                 title=args.title,
                 content=args.content,
                 priority=priority,
@@ -176,8 +147,7 @@ class TickTickCLI:
             )
             print(f"✓ 创建任务成功: {task['title']} (ID: {task['id']})")
         finally:
-            await task_service.close()
-            await project_service.close()
+            await service.close()
     
     async def tasks_update(self, args):
         """更新任务"""
@@ -237,25 +207,17 @@ class TickTickCLI:
     async def tasks_move(self, args):
         """移动任务到其他项目"""
         await self.ensure_auth()
-        task_service = TaskService(self.auth)
-        project_service = ProjectService(self.auth)
+        service = TaskService(self.auth)
 
         try:
-            to_project_id = await self._resolve_project_id(project_service, args.to_project_id, args.to_project_name)
-
-            if not to_project_id:
-                print("❌ 错误: 必须指定目标项目ID或项目名称")
-                return
-
-            await task_service.move(
+            await service.move(
                 task_id=args.task_id,
                 from_project_id=args.from_project_id,
-                to_project_id=to_project_id
+                to_project_id=args.to_project_id
             )
             print(f"✓ 任务移动成功")
         finally:
-            await task_service.close()
-            await project_service.close()
+            await service.close()
     
     async def tasks_find(self, args):
         """查找任务"""
@@ -325,25 +287,17 @@ class TickTickCLI:
     async def tasks_batch_move(self, args):
         """批量移动任务"""
         await self.ensure_auth()
-        task_service = TaskService(self.auth)
-        project_service = ProjectService(self.auth)
+        service = TaskService(self.auth)
 
         try:
-            to_project_id = await self._resolve_project_id(project_service, args.to_project_id, args.to_project_name)
-
-            if not to_project_id:
-                print("❌ 错误: 必须指定目标项目ID或项目名称")
-                return
-
             task_moves = json.loads(args.tasks)
-            await task_service.batch_move(
+            await service.batch_move(
                 task_moves=task_moves,
-                to_project_id=to_project_id
+                to_project_id=args.to_project_id
             )
             print(f"✓ 批量移动成功: {len(task_moves)} 个任务")
         finally:
-            await task_service.close()
-            await project_service.close()
+            await service.close()
     
     # ========== 标签管理 ==========
     
@@ -663,13 +617,11 @@ def main():
     # tasks list
     tasks_list = tasks_sub.add_parser('list', help='列出任务')
     tasks_list.add_argument('--project-id', help='项目ID')
-    tasks_list.add_argument('--project-name', help='项目名称')
-    
+
     # tasks create
     tasks_create = tasks_sub.add_parser('create', help='创建任务')
     tasks_create.add_argument('--title', required=True, help='任务标题')
-    tasks_create.add_argument('--project-id', help='项目ID')
-    tasks_create.add_argument('--project-name', help='项目名称')
+    tasks_create.add_argument('--project-id', required=True, help='项目ID')
     tasks_create.add_argument('--content', help='任务描述')
     tasks_create.add_argument('--priority', choices=['none', 'low', 'medium', 'high'], help='优先级')
     tasks_create.add_argument('--due-date', help='截止日期 (ISO格式)')
@@ -701,8 +653,7 @@ def main():
     tasks_move = tasks_sub.add_parser('move', help='移动任务到其他项目')
     tasks_move.add_argument('task_id', help='任务ID')
     tasks_move.add_argument('from_project_id', help='源项目ID')
-    tasks_move.add_argument('--to-project-id', help='目标项目ID')
-    tasks_move.add_argument('--to-project-name', help='目标项目名称')
+    tasks_move.add_argument('--to-project-id', required=True, help='目标项目ID')
     
     # tasks find
     tasks_find = tasks_sub.add_parser('find', help='查找任务')
@@ -726,8 +677,7 @@ def main():
     # tasks batch-move
     tasks_batch_move = tasks_sub.add_parser('batch-move', help='批量移动任务')
     tasks_batch_move.add_argument('--tasks', required=True, help='任务移动数据 (JSON 格式字符串)')
-    tasks_batch_move.add_argument('--to-project-id', help='目标项目ID')
-    tasks_batch_move.add_argument('--to-project-name', help='目标项目名称')
+    tasks_batch_move.add_argument('--to-project-id', required=True, help='目标项目ID')
     
     # ========== 标签管理==========
     tags = subparsers.add_parser('tags', help='标签管理')

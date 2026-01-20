@@ -1,11 +1,21 @@
 {
-  "name": "ticktick-task-management",
-  "description": "TickTick/滴答清单统一管理 CLI，支持任务、项目、标签、评论和习惯管理",
-  "version": "1.0.0",
-  "author": "SurfRid3r",
-  "license": "MIT",
-  "homepage": "https://github.com/SurfRid3r/skills",
-  "repository": "https://github.com/SurfRid3r/skills",
-  "tags": ["ticktick", "dida365", "task", "project", "productivity", "todo", "habits"],
-  "categories": ["productivity", "tools"]
+  "name": "surfrid3r-skills",
+  "owner": {
+    "name": "SurfRid3r"
+  },
+  "metadata": {
+    "description": "Collection of Claude Skills",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "ticktick-task-management",
+      "description": "TickTick/滴答清单统一管理 CLI，支持任务、项目、标签、评论和习惯管理",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/ticktick-task-management/"
+      ]
+    }
+  ]
 }

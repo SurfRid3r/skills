@@ -199,7 +199,12 @@ class TickTickCLI:
         await self.ensure_auth()
         service = TaskService(self.auth)
         try:
-            tasks = await service.search(keywords=args.keywords)
+            result = await service.search(keywords=args.keywords)
+            # search 返回字典，需要提取任务列表
+            if isinstance(result, dict):
+                tasks = result.get('tasks', result.get('searchResults', result.get('data', [])))
+            else:
+                tasks = result if isinstance(result, list) else []
             self._print_tasks(tasks)
         finally:
             await service.close()

@@ -9,6 +9,15 @@
   },
   "plugins": [
     {
+      "name": "article-reviewer",
+      "description": "文章审核与改进指导工具",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/article-reviewer/"
+      ]
+    },
+    {
       "name": "pcap-tools",
       "description": "PCAP 文件处理工具 - 流量分析、IP 修改、Payload 提取",
       "source": "./",

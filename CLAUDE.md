@@ -1,27 +1,44 @@
-# Claude Skills 创建指南
+# Claude Skills & Plugins 创建指南
 
-本指南基于 [Anthropic Agent Skills 开放标准](https://agentskills.io/specification)，帮助您创建符合规范的 Skills。
+本指南基于 [Anthropic Agent Skills 开放标准](https://agentskills.io/specification)，帮助您创建符合规范的 Skills 和 Plugins。
 
 ## 参考资料
 
 - **[Agent Skills 规范](https://agentskills.io/specification)** - 官方规范文档
 - **[Anthropic Skills 仓库](https://github.com/anthropics/skills)** - 官方示例集合
-- **[技能创建器](https://github.com/anthropics/skills/tree/main/skills/skill-creator)** - 交互式技能创建指南
+- **[Claude Plugins Official](https://github.com/anthropics/claude-plugins-official)** - 官方插件仓库
 
 ---
 
-## 目录结构
+## 市场仓库结构
 
-一个技能目录至少包含 `SKILL.md` 文件：
+本项目采用市场仓库结构，可包含多个独立插件：
 
 ```
-skill-name/
-├── SKILL.md          # 必需：技能定义文件
-├── scripts/          # 可选：可执行代码
-├── references/       # 可选：参考文档
-├── assets/           # 可选：静态资源
-└── LICENSE.txt       # 可选：许可证文件
+SurfRid3rSkills/
+├── .claude-plugin/
+│   └── marketplace.json              # 市场目录配置
+├── plugins/
+│   └── {plugin-name}/                # 单个插件目录
+│       ├── .claude-plugin/
+│       │   └── plugin.json           # 插件元数据
+│       ├── skills/                   # 技能目录（可选）
+│       │   └── {skill-name}/
+│       │       ├── SKILL.md          # 技能定义
+│       │       ├── scripts/          # 可执行代码（可选）
+│       │       └── references/       # 参考文档（可选）
+│       ├── commands/                 # 命令目录（可选）
+│       ├── agents/                   # 代理目录（可选）
+│       └── README.md                 # 插件说明（可选）
 ```
+
+### 组件说明
+
+| 目录 | 说明 | 自动发现 |
+|------|------|----------|
+| `skills/` | 技能目录，每个技能是子目录 | ✅ 自动扫描 SKILL.md |
+| `commands/` | 命令目录，放 .md 命令文件 | ✅ 自动扫描 |
+| `agents/` | 代理目录，放 .md 代理文件 | ✅ 自动扫描 |
 
 ---
 
@@ -61,54 +78,83 @@ description: 帮助处理 PDF。
 
 ---
 
-## 新增 Skill 工作流程
+## 新增插件/技能工作流程
 
-### 1. 创建 Skill
+### 方式一：新增独立插件
 
-按照官方规范创建技能目录和内容。
+适用于功能相对独立的工具，创建新的插件目录：
 
-### 2. 同步更新配置文件
+```bash
+# 1. 创建插件目录
+mkdir -p plugins/your-plugin/.claude-plugin
+mkdir -p plugins/your-plugin/skills/your-skill
 
-每次新增 skill 后，需要同步更新以下文件：
+# 2. 创建 plugin.json
+cat > plugins/your-plugin/.claude-plugin/plugin.json << 'EOF'
+{
+  "name": "your-plugin",
+  "version": "1.0.0",
+  "description": "插件描述",
+  "author": {
+    "name": "SurfRid3r"
+  }
+}
+EOF
 
-#### README.md
-在 Skills 表格中添加新技能条目：
-
-```markdown
-| Skill | Description |
-|-------|-------------|
-| [your-skill](skills/your-skill/) | 技能描述 |
+# 3. 创建技能文件 SKILL.md
+# 编辑 plugins/your-plugin/skills/your-skill/SKILL.md
 ```
 
-#### .claude-plugin/marketplace.json
-在 plugins 数组中添加新技能配置：
+#### 同步更新配置文件
+
+**README.md** - 在插件列表中添加：
+
+```markdown
+| [your-plugin](plugins/your-plugin/) | 分类 | 插件描述 |
+```
+
+**.claude-plugin/marketplace.json** - 在 plugins 数组中添加：
 
 ```json
 {
-  "name": "your-skill-name",
-  "description": "技能描述",
-  "source": "./",
-  "strict": false,
-  "skills": ["./skills/your-skill-name/"]
+  "name": "your-plugin",
+  "description": "插件描述",
+  "version": "1.0.0",
+  "author": { "name": "SurfRid3r" },
+  "source": "./plugins/your-plugin",
+  "category": "分类",
+  "strict": false
 }
 ```
 
-### 3. Git 提交流程
+### 方式二：在现有插件中新增技能
+
+适用于相关功能，在现有插件下添加新技能：
 
 ```bash
-# 创建新分支（分支名与技能名保持一致）
-git checkout -b your-skill-name
+# 在现有插件目录下创建新技能
+mkdir -p plugins/existing-plugin/skills/new-skill
+
+# 创建 SKILL.md
+# 编辑 plugins/existing-plugin/skills/new-skill/SKILL.md
+```
+
+### Git 提交流程
+
+```bash
+# 创建新分支
+git checkout -b feat/your-plugin-or-skill
 
 # 添加变更
-git add skills/your-skill-name/
+git add plugins/your-plugin/
 git add README.md
 git add .claude-plugin/marketplace.json
 
 # 提交
-git commit -m "feat(your-skill): add new skill"
+git commit -m "feat: add your-plugin/skill"
 
 # 推送并创建 PR
-git push origin your-skill-name
+git push origin feat/your-plugin-or-skill
 ```
 
 ---
@@ -158,7 +204,7 @@ git push origin your-skill-name
 
 **references/** - 参考文档
 - 何时使用：需要 Claude 在工作过程中参考的文档
-- 示例：数据库 schema、API 文档、公司政策
+- 示例：数据库 schema、API 文档、使用说明
 - 最佳实践：文件 > 10k 行时，在 SKILL.md 中包含 grep 搜索模式
 
 **assets/** - 输出资源
@@ -189,12 +235,14 @@ git push origin your-skill-name
 
 **模式 2: 领域特定组织**
 ```
-bigquery-skill/
-├── SKILL.md (概览和导航)
-└── references/
-    ├── finance.md
-    ├── sales.md
-    └── product.md
+bigquery-plugin/
+└── skills/
+    └── bigquery/
+        ├── SKILL.md (概览和导航)
+        └── references/
+            ├── finance.md
+            ├── sales.md
+            └── product.md
 ```
 
 ### 7. 文件引用规范
@@ -210,7 +258,7 @@ bigquery-skill/
 使用 skills-ref 参考库验证技能：
 
 ```bash
-skills-ref validate ./my-skill
+skills-ref validate ./plugins/your-plugin/skills/your-skill
 ```
 
 检查项目：
@@ -220,8 +268,9 @@ skills-ref validate ./my-skill
 - 描述完整性
 
 ---
+
 ## 相关资源
 
 - [Agent Skills 规范](https://agentskills.io/specification)
 - [Anthropic Skills 仓库](https://github.com/anthropics/skills)
-- [技能创建器](https://github.com/anthropics/skills/tree/main/skills/skill-creator)
+- [Claude Plugins Official](https://github.com/anthropics/claude-plugins-official)

@@ -1,0 +1,8 @@
+{
+  "name": "ticktick-task-management",
+  "version": "1.0.0",
+  "description": "TickTick/滴答清单统一管理 CLI，支持任务、项目、标签、评论和习惯管理",
+  "author": {
+    "name": "SurfRid3r"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "pcap-tools",
+  "version": "1.0.0",
+  "description": "PCAP 文件处理工具 - 流量分析、IP 修改、Payload 提取",
+  "author": {
+    "name": "SurfRid3r"
+  }
+}

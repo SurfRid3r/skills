@@ -1,39 +1,43 @@
 {
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "surfrid3r-skills",
+  "description": "SurfRid3r's collection of practical Claude Skills - continuously updated with tools for daily workflows",
   "owner": {
     "name": "SurfRid3r"
-  },
-  "metadata": {
-    "description": "Collection of Claude Skills",
-    "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "article-reviewer",
-      "description": "文章审核与改进指导工具",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./skills/article-reviewer/"
-      ]
+      "description": "文章审核与改进指导工具 - 基于写作方法论提供系统性审核",
+      "version": "1.0.0",
+      "author": {
+        "name": "SurfRid3r"
+      },
+      "source": "./plugins/article-reviewer",
+      "category": "productivity",
+      "strict": false
     },
     {
       "name": "pcap-tools",
       "description": "PCAP 文件处理工具 - 流量分析、IP 修改、Payload 提取",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./skills/pcap-tools/"
-      ]
+      "version": "1.0.0",
+      "author": {
+        "name": "SurfRid3r"
+      },
+      "source": "./plugins/pcap-tools",
+      "category": "security",
+      "strict": false
     },
     {
       "name": "ticktick-task-management",
       "description": "TickTick/滴答清单统一管理 CLI，支持任务、项目、标签、评论和习惯管理",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./skills/ticktick-task-management/"
-      ]
+      "version": "1.0.0",
+      "author": {
+        "name": "SurfRid3r"
+      },
+      "source": "./plugins/ticktick-task-management",
+      "category": "productivity",
+      "strict": false
     }
   ]
 }

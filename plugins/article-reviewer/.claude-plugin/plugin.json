@@ -1,0 +1,8 @@
+{
+  "name": "article-reviewer",
+  "version": "1.0.0",
+  "description": "文章审核与改进指导工具 - 基于写作方法论提供系统性审核",
+  "author": {
+    "name": "SurfRid3r"
+  }
+}

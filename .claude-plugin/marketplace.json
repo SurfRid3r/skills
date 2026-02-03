@@ -1,7 +1,6 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "surfrid3r-skills",
-  "description": "SurfRid3r's collection of practical Claude Skills - continuously updated with tools for daily workflows",
+  "description": "SurfRid3r's collection of practical Claude Skills",
   "owner": {
     "name": "SurfRid3r"
   },

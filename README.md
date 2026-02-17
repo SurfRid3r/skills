@@ -16,6 +16,7 @@ claude marketplace add https://github.com/SurfRid3r/SurfRid3rSkills
 claude plugin install article-reviewer
 claude plugin install pcap-tools
 claude plugin install ticktick-task-management
+claude plugin install tencent-converter
 ```
 
 ## 插件列表
@@ -25,6 +26,7 @@ claude plugin install ticktick-task-management
 | [article-reviewer](plugins/article-reviewer/) | 效率工具 | 文章审核与改进指导工具 - 基于写作方法论提供系统性审核 |
 | [pcap-tools](plugins/pcap-tools/) | 安全工具 | PCAP 文件处理工具 - 流量分析、IP 修改、Payload 提取 |
 | [ticktick-task-management](plugins/ticktick-task-management/) | 效率工具 | TickTick/滴答清单统一管理 CLI - 支持任务、项目、标签、评论和习惯管理 |
+| [tencent-converter](plugins/tencent-converter/) | 效率工具 | 腾讯文档转 Markdown 工具 - 支持标题、段落、列表、代码块、图片、表格、超链接 |
 
 ## 目录结构
 
@@ -50,6 +52,13 @@ SurfRid3rSkills/
 │           ├── SKILL.md
 │           ├── scripts/
 │           └── references/
+│   └── tencent-converter/
+│       ├── .claude-plugin/plugin.json
+│       └── skills/
+│           └── tencent-converter/
+│               ├── SKILL.md
+│               ├── scripts/
+│               └── references/
 ```
 
 ## 贡献指南

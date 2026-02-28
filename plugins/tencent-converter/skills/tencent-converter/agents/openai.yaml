@@ -1,0 +1,87 @@
+schema: skillagent/v1
+name: tencent-converter
+description: |
+  Convert Tencent documents and spreadsheets to Markdown format.
+  Supports headings, paragraphs, lists, code blocks, images, tables, and hyperlinks.
+
+trigger:
+  - pattern: "doc\\.weixin\\.qq\\.com"
+  - pattern: "sheet\\.weixin\\.qq\\.com"
+  - keywords:
+      - "腾讯文档"
+      - "腾讯表格"
+      - "tencent doc"
+      - "tencent sheet"
+      - "convert document"
+      - "convert spreadsheet"
+
+inputs:
+  url:
+    type: string
+    description: Tencent document or spreadsheet URL
+  file:
+    type: string
+    description: Local JSON file path (from browser MCP)
+  output:
+    type: string
+    description: Output Markdown file path
+    required: true
+  cookie:
+    type: string
+    description: Path to cookies.txt file (required for Cookie mode)
+  all-tabs:
+    type: boolean
+    description: Fetch all visible worksheets (spreadsheet only)
+    default: false
+  sheet-name:
+    type: string
+    description: Specific worksheet name (spreadsheet only)
+
+workflow:
+  convert_document:
+    description: Convert Tencent document to Markdown
+    steps:
+      - Open document URL with browser MCP
+      - Reload page to capture network requests
+      - Find opendoc API request (XHR/fetch)
+      - Save response to JSON file
+      - Run convert.py with JSON input
+      - Return Markdown file path
+
+  convert_spreadsheet:
+    description: Convert Tencent spreadsheet to Markdown
+    steps:
+      - Open spreadsheet URL with browser MCP
+      - Reload page to capture network requests
+      - Find opendoc API request (XHR/fetch)
+      - Save response to JSON file
+      - Run convert.py with JSON input
+      - Return Markdown file path
+
+  convert_all_tabs:
+    description: Convert all visible worksheets
+    steps:
+      - Open spreadsheet URL with browser MCP
+      - Get tabs list from API
+      - Iterate through each worksheet
+      - Capture and convert each sheet
+      - Return directory with all Markdown files
+
+examples:
+  - description: Convert a single document
+    input:
+      url: "https://doc.weixin.qq.com/doc/abc123"
+      output: "output/document.md"
+    output:
+      file: "output/document.md"
+
+  - description: Convert all spreadsheet tabs
+    input:
+      url: "https://sheet.weixin.qq.com/sheet/xyz789"
+      output-dir: "output/spreadsheet/"
+      all-tabs: true
+    output:
+      directory: "output/spreadsheet/"
+      files:
+        - "工作计划.md"
+        - "数据汇总.md"

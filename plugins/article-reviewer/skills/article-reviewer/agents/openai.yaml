@@ -1,0 +1,4 @@
+interface:
+  display_name: "Article Reviewer"
+  short_description: "Review writing quality and provide actionable improvements"
+  default_prompt: "Use $article-reviewer to review this draft and provide prioritized, concrete rewrite suggestions with examples."

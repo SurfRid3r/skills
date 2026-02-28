@@ -6,7 +6,13 @@
     python3 to_markdown.py result.json -o output.md
 """
 import argparse
+import sys
 from pathlib import Path
+
+# 添加脚本目录到 sys.path
+_SCRIPT_DIR = Path(__file__).parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 
 from markdown_generator import TencentDocToMarkdown
 

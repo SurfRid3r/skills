@@ -7,12 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-try:
-    import requests
-except ImportError:
-    print("错误: 需要安装 requests 库")
-    print("运行: pip install requests")
-    sys.exit(1)
+import requests
 
 
 def parse_url(url: str) -> tuple[str, str]:

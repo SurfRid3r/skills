@@ -1,6 +1,6 @@
 ---
 name: ticktick-task-management
-description: TickTick/滴答清单统一管理 CLI,支持任务、项目、标签、评论和习惯管理。当用户需要以下操作时使用: (1) 创建/更新/删除/完成任务, (2) 管理项目, (3) 整理标签, (4) 添加任务评论, (5) 追踪习惯。所有操作需配置 `.env` 文件中的 DIDA_USERNAME 和 DIDA_PASSWORD。
+description: "TickTick/滴答清单统一管理 CLI,支持任务、项目、标签、评论和习惯管理。当用户需要以下操作时使用: (1) 创建/更新/删除/完成任务, (2) 管理项目, (3) 整理标签, (4) 添加任务评论, (5) 追踪习惯。所有操作需配置 `.env` 文件中的 DIDA_USERNAME 和 DIDA_PASSWORD。"
 ---
 
 # TickTick 任务管理

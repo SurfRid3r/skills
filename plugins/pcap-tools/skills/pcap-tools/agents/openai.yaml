@@ -1,0 +1,4 @@
+interface:
+  display_name: "PCAP Tools"
+  short_description: "Analyze, filter, extract, and rewrite PCAP flows"
+  default_prompt: "Use $pcap-tools to analyze this PCAP, identify key source/destination IP flows, and apply requested IP rewrites."

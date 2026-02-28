@@ -1,6 +1,6 @@
 ---
 name: pcap-tools
-description: PCAP 文件处理工具。当用户需要: (1) 修改 PCAP 中的 IP 地址（支持同时修改源IP和目的IP、保持双向流完整性）、(2) 列出 PCAP 中的 IP 流、(3) 提取数据包 payload、(4) 按端口/IP 过滤流量时使用。关键词：修改IP、替换地址、IP到IP、源IP、目的IP、X到Y
+description: "PCAP 文件处理工具。当用户需要: (1) 修改 PCAP 中的 IP 地址（支持同时修改源IP和目的IP、保持双向流完整性）、(2) 列出 PCAP 中的 IP 流、(3) 提取数据包 payload、(4) 按端口/IP 过滤流量时使用。关键词：修改IP、替换地址、IP到IP、源IP、目的IP、X到Y"
 ---
 
 # PCAP 工具集
@@ -28,7 +28,7 @@ python scripts/pcap_tools.py <command> [options]
 pip install scapy
 ```
 
----
+***
 
 ## IP 提取分析工作流
 
@@ -128,7 +128,7 @@ python scripts/pcap_tools.py extract file.pcap 192.168.1.111 192.168.1.21 --hex 
 源IP,目的IP,pcap名称
 ```
 
----
+***
 
 ## IP 修改工作流
 
@@ -196,7 +196,7 @@ python scripts/pcap_tools.py modify webshell.pcap \
 - **HTTP Host 同步**: 自动替换 TCP payload 中的 `Host: old_ip` 为 `Host: new_ip`
 - **校验和重算**: 自动重新计算 IP 和 TCP 校验和
 
----
+***
 
 ## 详细资源
 

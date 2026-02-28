@@ -41,10 +41,6 @@ except ImportError:
     )
 
 
-# =============================================================================
-# Protobuf 解析核心
-# =============================================================================
-
 def decode_varint(data: bytes, offset: int) -> tuple[int, int]:
     """解码 varint，返回 (值, 新偏移量)"""
     result = 0
@@ -165,10 +161,6 @@ def unescape(s: str) -> str:
     result = re.sub(r'%u([0-9a-fA-F]{4})', replace_unicode, s)
     return re.sub(r'%([0-9a-fA-F]{2})', replace_ascii, result)
 
-
-# =============================================================================
-# Mutation 数据结构
-# =============================================================================
 
 @dataclass
 class ImageInfo:
@@ -504,10 +496,6 @@ class Mutation:
 
         return result
 
-
-# =============================================================================
-# ultrabuf 解析器
-# =============================================================================
 
 class UltrabufParser:
     """ultrabuf Protobuf 解析器"""
@@ -863,10 +851,6 @@ class UltrabufParser:
         return None
 
 
-# =============================================================================
-# 腾讯文档解析器
-# =============================================================================
-
 class TencentDocParser:
     """腾讯文档解析器"""
 
@@ -970,10 +954,6 @@ class TencentDocParser:
         return mappings
 
 
-# =============================================================================
-# DocumentBuilder - 基于 mutations 构建文档结构
-# =============================================================================
-
 @dataclass
 class TextPosition:
     """文档位置元素"""
@@ -1021,19 +1001,11 @@ class DocumentBuilder:
         return self.positions
 
 
-# =============================================================================
-# 输出生成器
-# =============================================================================
-
 def generate_json(parsed: dict[str, Any]) -> str:
     """生成 JSON 输出 (intermediate.json 格式)"""
     parsed_copy = {k: v for k, v in parsed.items() if k != "document_builder"}
     return json.dumps(parsed_copy, ensure_ascii=False, indent=2)
 
-
-# =============================================================================
-# API 函数 (供 convert.py 调用)
-# =============================================================================
 
 def parse_opendoc(input_file: str, output_prefix: str, verbose: bool = False) -> str:
     """
@@ -1072,10 +1044,6 @@ def parse_opendoc(input_file: str, output_prefix: str, verbose: bool = False) ->
 
     return str(intermediate_file)
 
-
-# =============================================================================
-# 主函数
-# =============================================================================
 
 def main():
     """主函数"""

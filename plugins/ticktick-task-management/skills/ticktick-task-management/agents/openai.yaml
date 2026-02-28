@@ -1,0 +1,4 @@
+interface:
+  display_name: "TickTick Task Management"
+  short_description: "Manage TickTick tasks, projects, tags, comments, and habits"
+  default_prompt: "Use $ticktick-task-management to manage my TickTick tasks, including project assignment, due dates, priorities, and completion updates."

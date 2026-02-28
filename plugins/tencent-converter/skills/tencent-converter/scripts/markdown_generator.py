@@ -65,10 +65,10 @@ class TencentDocToMarkdown:
 
             elif stype == "code_block":
                 content = section.get("content", "")
-                lines.append("```")
-                if content:
+                if content:  # 只在内容非空时输出代码块
+                    lines.append("```")
                     lines.append(content)
-                lines.append("```")
+                    lines.append("```")
 
             elif stype == "image":
                 info = section.get("image_info", {})

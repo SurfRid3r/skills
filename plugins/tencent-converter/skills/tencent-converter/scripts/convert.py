@@ -3,23 +3,15 @@
 Tencent Converter - 腾讯文档/表格转 Markdown 独立版本
 
 支持两种数据类型:
-  - doc: 文档类型 (opendoc 响应)
-    三步流水线: parser.py → format_parser.py → to_markdown.py
-  - sheet: 表格类型 (dop-api/get/sheet 响应或浏览器数据)
-    直接转换: sheet_parser.py → sheet_converter.py
-
-特点：
-  - 自动检测输入类型
-  - 直接函数调用，无需 subprocess
-  - 所有依赖内置，可独立发布
-  - 支持 URL 直接获取数据（需 Cookie）
-  - 支持多工作表输出
+  - doc: 文档类型 (opendoc 响应) - 三步流水线
+  - sheet: 表格类型 (dop-api/get/sheet 响应或浏览器数据) - 直接转换
 """
 
 import argparse
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 # 添加脚本目录到 sys.path 以支持直接运行
@@ -40,25 +32,18 @@ ILLEGAL_FILENAME_CHARS = r'[<>:"/\\|?*]'
 
 def sanitize_filename(name: str, max_length: int = 200) -> str:
     """清理文件名，移除非法字符并限制长度"""
-    # 移除非法字符
     name = re.sub(ILLEGAL_FILENAME_CHARS, '_', name)
-    # 移除首尾空白和点
     name = name.strip('. ')
-    # 限制长度
     if len(name) > max_length:
         name = name[:max_length]
     return name or "unnamed"
 
 
 def detect_url_type(url: str) -> str:
-    """检测 URL 类型
-
-    Returns:
-        "doc", "sheet", 或 "unknown"
-    """
+    """检测 URL 类型: "doc", "sheet", 或 "unknown" """
     if "/doc/" in url:
         return "doc"
-    elif "/sheet/" in url:
+    if "/sheet/" in url:
         return "sheet"
     return "unknown"
 
@@ -66,17 +51,33 @@ def detect_url_type(url: str) -> str:
 def get_sheet_title(data: dict) -> str:
     """从 API 响应中获取表格标题"""
     try:
-        client_vars = data.get("clientVars", {})
-        return client_vars.get("padTitle", "未命名表格")
+        return data.get("clientVars", {}).get("padTitle", "未命名表格")
     except (KeyError, TypeError):
         return "未命名表格"
+
+
+def _print_banner(title: str, lines: list[str]) -> None:
+    """打印带边框的标题"""
+    print("=" * 60)
+    print(title)
+    print("=" * 60)
+    for line in lines:
+        print(line)
+
+
+def _cleanup_file(file_path: Path, verbose: bool, label: str = "file") -> None:
+    """删除文件（如果存在）"""
+    if file_path and file_path.exists():
+        file_path.unlink()
+        if verbose:
+            print(f"[Cleanup] Removed {label}: {file_path}")
 
 
 def run_doc_pipeline(
     input_file: Path, output_file: Path, keep_intermediate: bool, verbose: bool,
     page_url: str | None = None, cleanup_source: bool = False
-) -> None:
-    """运行文档转换流水线"""
+) -> str | None:
+    """运行文档转换流水线，返回文档标题"""
     work_dir = input_file.parent
     base_name = input_file.stem.replace("_opendoc_response", "")
 
@@ -95,46 +96,29 @@ def run_doc_pipeline(
     # Step 3: markdown → output.md
     if verbose:
         print(f"\n[Step 3] Generating markdown...")
-    convert_to_markdown(str(result_file), str(output_file), verbose, page_url=page_url)
+    _, title = convert_to_markdown(str(result_file), str(output_file), verbose, page_url=page_url)
 
     # 清理中间文件
     if not keep_intermediate:
-        if intermediate_file.exists():
-            intermediate_file.unlink()
-            if verbose:
-                print(f"[Cleanup] Removed: {intermediate_file}")
-        if result_file.exists():
-            result_file.unlink()
-            if verbose:
-                print(f"[Cleanup] Removed: {result_file}")
+        _cleanup_file(intermediate_file, verbose, "intermediate")
+        _cleanup_file(result_file, verbose, "result")
 
     # 清理源文件
-    if cleanup_source and input_file.exists():
-        input_file.unlink()
-        if verbose:
-            print(f"[Cleanup] Removed source: {input_file}")
+    if cleanup_source:
+        _cleanup_file(input_file, verbose, "source")
+
+    return title
 
 
 def escape_cell(text: str) -> str:
-    """转义单元格值"""
+    """转义单元格值：换行符替换为 <br>，管道符转义"""
     if not text:
         return ""
-    # 换行符替换为 <br>
-    text = text.replace("\n", "<br>")
-    # 转义管道符
-    text = text.replace("|", "\\|")
-    return text
+    return text.replace("\n", "<br>").replace("|", "\\|")
 
 
 def generate_sheet_markdown(sheet) -> str:
-    """生成单个工作表的 Markdown 内容
-
-    Args:
-        sheet: SheetInfo 对象
-
-    Returns:
-        Markdown 格式的表格内容
-    """
+    """生成单个工作表的 Markdown 内容"""
     parts = [f"## {sheet.sheet_name}\n\n"]
 
     if not sheet.cells:
@@ -148,32 +132,47 @@ def generate_sheet_markdown(sheet) -> str:
 
     # 生成表格
     for row in range(max_row + 1):
-        cells = []
-        for col in range(max_col + 1):
-            cell = cell_map.get((row, col))
-            if cell:
-                cells.append(escape_cell(cell.value))
-            else:
-                cells.append('')
+        cells = [
+            escape_cell(cell_map.get((row, col)).value) if cell_map.get((row, col)) else ''
+            for col in range(max_col + 1)
+        ]
         parts.append("| " + " | ".join(cells) + " |\n")
 
         # 在表头后添加分隔行
         if row == 0:
-            parts.append("| " + " | ".join(["---" for _ in range(max_col + 1)]) + " |\n")
+            parts.append("| " + " | ".join(["---"] * (max_col + 1)) + " |\n")
 
     return "".join(parts)
+
+
+def _is_api_format(data: dict) -> bool:
+    """检查是否是 API 数据格式"""
+    try:
+        # 检查 clientVars 格式
+        cv = data.get('clientVars', {})
+        ccv = cv.get('collab_client_vars', {})
+        text_list = ccv.get('initialAttributedText', {}).get('text', [])
+        if text_list and isinstance(text_list, list) and text_list[0].get('related_sheet'):
+            return True
+
+        # 检查 data 格式
+        text_list = data.get('data', {}).get('initialAttributedText', {}).get('text', [])
+        if text_list and isinstance(text_list, list) and text_list[0].get('related_sheet'):
+            return True
+    except (KeyError, TypeError, IndexError):
+        pass
+    return False
 
 
 def run_sheet_pipeline(
     input_file: Path, output_file: Path, verbose: bool, cleanup_source: bool = False,
     sheet_name: str | None = None
-) -> None:
-    """运行表格转换流水线（单文件输出）"""
+) -> tuple[str | None, str | None]:
+    """运行表格转换流水线（单文件输出），返回 (表格标题, 子表名称)"""
     if verbose:
         print(f"\n[Sheet] Converting spreadsheet...")
         print(f"  输入: {input_file}")
 
-    # 检测数据类型
     with open(input_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -181,79 +180,43 @@ def run_sheet_pipeline(
     if verbose:
         print(f"  数据类型: {data_type}")
 
-    if data_type == "sheet":
-        # 检查是否是 API 数据格式
-        is_api_format = False
-        try:
-            cv = data.get('clientVars', {})
-            ccv = cv.get('collab_client_vars', {})
-            text_list = ccv.get('initialAttributedText', {}).get('text', [])
-            if text_list and isinstance(text_list, list) and text_list[0].get('related_sheet'):
-                is_api_format = True
-        except (KeyError, TypeError, IndexError):
-            pass
+    pad_title = get_sheet_title(data)
+    first_sheet_name = None
 
-        # 检查直接格式
-        if not is_api_format:
-            try:
-                text_list = data.get('data', {}).get('initialAttributedText', {}).get('text', [])
-                if text_list and isinstance(text_list, list) and text_list[0].get('related_sheet'):
-                    is_api_format = True
-            except (KeyError, TypeError, IndexError):
-                pass
-
-        if is_api_format:
-            # 使用 API 解析器
-            from sheet_api_parser import parse_sheet_api
-            sheets = parse_sheet_api(str(input_file), verbose=verbose)
-
-            # 过滤指定工作表
-            if sheet_name:
-                sheets = [s for s in sheets if s.sheet_name == sheet_name]
-                if not sheets:
-                    print(f"错误: 找不到工作表 '{sheet_name}'")
-                    return
-
-            # 转换为 Markdown
-            parts = []
-            for i, sheet in enumerate(sheets):
-                if i > 0:
-                    parts.append("\n\n---\n\n")
-                parts.append(generate_sheet_markdown(sheet))
-        else:
-            # 使用浏览器数据解析器
-            convert_sheet_to_markdown(str(input_file), str(output_file), verbose)
-
-            # 清理源文件
-            if cleanup_source and input_file.exists():
-                input_file.unlink()
-                if verbose:
-                    print(f"[Cleanup] Removed source: {input_file}")
-            return
-    else:
-        # 使用浏览器数据解析器
+    # 非 API 格式直接使用浏览器数据解析器
+    if data_type != "sheet" or not _is_api_format(data):
         convert_sheet_to_markdown(str(input_file), str(output_file), verbose)
+        _cleanup_file(input_file, cleanup_source and input_file.exists(), "source")
+        return pad_title, first_sheet_name
 
-        # 清理源文件
-        if cleanup_source and input_file.exists():
-            input_file.unlink()
-            if verbose:
-                print(f"[Cleanup] Removed source: {input_file}")
-        return
+    # API 格式处理
+    from sheet_api_parser import parse_sheet_api
+    sheets = parse_sheet_api(str(input_file), verbose=verbose)
 
-    # 保存输出
-    markdown = "".join(parts)
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(markdown)
+    visible_sheets = [s for s in sheets if s.is_visible]
+    if visible_sheets:
+        first_sheet_name = visible_sheets[0].sheet_name
 
+    if sheet_name:
+        sheets = [s for s in sheets if s.sheet_name == sheet_name]
+        if not sheets:
+            print(f"错误: 找不到工作表 '{sheet_name}'")
+            return pad_title, None
+        first_sheet_name = sheet_name
+
+    # 转换为 Markdown
+    parts = []
+    for i, sheet in enumerate(sheets):
+        if i > 0:
+            parts.append("\n\n---\n\n")
+        parts.append(generate_sheet_markdown(sheet))
+
+    output_file.write_text("".join(parts), encoding='utf-8')
     if verbose:
         print(f"  输出: {output_file}")
 
-    # 清理源文件
-    if cleanup_source and input_file.exists():
-        input_file.unlink()
-        if verbose:
-            print(f"[Cleanup] Removed source: {input_file}")
+    _cleanup_file(input_file, cleanup_source, "source")
+    return pad_title, first_sheet_name
 
 
 def run_sheet_multi_output(
@@ -263,24 +226,12 @@ def run_sheet_multi_output(
     verbose: bool = False,
     cleanup_source: bool = False,
 ) -> list[Path]:
-    """输出多个工作表到指定目录
-
-    Args:
-        input_file: 输入 JSON 文件
-        output_dir: 输出目录
-        sheet_name: 指定工作表名称（None 表示全部可见工作表）
-        verbose: 详细输出
-        cleanup_source: 是否清理源文件
-
-    Returns:
-        生成的文件路径列表
-    """
+    """输出多个工作表到指定目录，返回生成的文件路径列表"""
     if verbose:
         print(f"\n[Sheet] Converting spreadsheet (multi-output)...")
         print(f"  输入: {input_file}")
         print(f"  输出目录: {output_dir}")
 
-    # 读取数据
     with open(input_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -288,7 +239,6 @@ def run_sheet_multi_output(
     if "sheets" in data and isinstance(data.get("sheets"), list):
         return _process_all_tabs_data(data, output_dir, sheet_name, verbose, cleanup_source, input_file)
 
-    # 获取表格标题作为子目录名
     pad_title = get_sheet_title(data)
     safe_title = sanitize_filename(pad_title)
     actual_output_dir = output_dir / safe_title
@@ -298,14 +248,11 @@ def run_sheet_multi_output(
         print(f"  表格标题: {pad_title}")
         print(f"  实际输出目录: {actual_output_dir}")
 
-    # 解析工作表
     from sheet_api_parser import parse_sheet_api
     sheets = parse_sheet_api(str(input_file), verbose=verbose)
 
-    # 过滤可见工作表
     visible_sheets = [s for s in sheets if s.is_visible]
 
-    # 如果指定工作表名称，只处理该工作表
     if sheet_name:
         visible_sheets = [s for s in visible_sheets if s.sheet_name == sheet_name]
         if not visible_sheets:
@@ -317,27 +264,17 @@ def run_sheet_multi_output(
         for s in visible_sheets:
             print(f"    - {s.sheet_name}")
 
-    # 为每个工作表生成 Markdown
     output_files = []
     for sheet in visible_sheets:
         safe_sheet_name = sanitize_filename(sheet.sheet_name)
         output_file = actual_output_dir / f"{safe_sheet_name}.md"
-
-        markdown = generate_sheet_markdown(sheet)
-        output_file.write_text(markdown, encoding='utf-8')
+        output_file.write_text(generate_sheet_markdown(sheet), encoding='utf-8')
         output_files.append(output_file)
-
         if verbose:
             print(f"  生成: {output_file}")
 
     print(f"已生成 {len(output_files)} 个文件到: {actual_output_dir}")
-
-    # 清理源文件
-    if cleanup_source and input_file.exists():
-        input_file.unlink()
-        if verbose:
-            print(f"[Cleanup] Removed source: {input_file}")
-
+    _cleanup_file(input_file, cleanup_source, "source")
     return output_files
 
 
@@ -349,20 +286,7 @@ def _process_all_tabs_data(
     cleanup_source: bool,
     input_file: Path | None = None,
 ) -> list[Path]:
-    """处理 --all-tabs 格式的数据
-
-    Args:
-        data: fetch_all_sheets 返回的数据
-        output_dir: 输出目录
-        sheet_name: 指定工作表名称
-        verbose: 详细输出
-        cleanup_source: 是否清理源文件
-        input_file: 源文件路径（用于清理）
-
-    Returns:
-        生成的文件路径列表
-    """
-    import tempfile
+    """处理 --all-tabs 格式的数据，返回生成的文件路径列表"""
     from sheet_api_parser import parse_sheet_api
 
     pad_title = data.get("padTitle", "未命名表格")
@@ -376,7 +300,6 @@ def _process_all_tabs_data(
 
     sheets_data = data.get("sheets", [])
 
-    # 如果指定工作表名称，只处理该工作表
     if sheet_name:
         sheets_data = [s for s in sheets_data if s.get("tab_name") == sheet_name]
         if not sheets_data:
@@ -398,27 +321,20 @@ def _process_all_tabs_data(
                 print(f"  跳过空工作表: {tab_name}")
             continue
 
-        # 保存临时文件供解析器使用
         temp_file = Path(tempfile.mktemp(suffix=".json"))
         temp_file.write_text(json.dumps(sheet_data, ensure_ascii=False), encoding='utf-8')
 
         try:
-            # 解析工作表
             sheets = parse_sheet_api(str(temp_file), verbose=False)
             if not sheets:
                 if verbose:
                     print(f"  跳过无法解析的工作表: {tab_name}")
                 continue
 
-            # 取第一个工作表（应该只有一个）
             sheet = sheets[0]
-
-            # 生成 Markdown
             safe_sheet_name = sanitize_filename(tab_name)
             output_file = actual_output_dir / f"{safe_sheet_name}.md"
-
-            markdown = generate_sheet_markdown(sheet)
-            output_file.write_text(markdown, encoding='utf-8')
+            output_file.write_text(generate_sheet_markdown(sheet), encoding='utf-8')
             output_files.append(output_file)
 
             if verbose:
@@ -427,19 +343,58 @@ def _process_all_tabs_data(
         except Exception as e:
             print(f"  错误: 处理 {tab_name} 失败: {e}", file=sys.stderr)
         finally:
-            # 清理临时文件
-            if temp_file.exists():
-                temp_file.unlink()
+            _cleanup_file(temp_file, False, "temp")
 
     print(f"已生成 {len(output_files)} 个文件到: {actual_output_dir}")
-
-    # 清理源文件
-    if cleanup_source and input_file and input_file.exists():
-        input_file.unlink()
-        if verbose:
-            print(f"[Cleanup] Removed source: {input_file}")
-
+    if input_file:
+        _cleanup_file(input_file, cleanup_source, "source")
     return output_files
+
+
+def _run_auto_output_conversion(
+    input_file: Path,
+    input_type: str,
+    args: argparse.Namespace,
+    temp_json_file: Path | None,
+) -> None:
+    """运行自动命名输出的转换（未指定 -o 参数时）"""
+    temp_output = Path(tempfile.mktemp(suffix=".md"))
+
+    if input_type == "doc":
+        _print_banner("Tencent Converter - 腾讯文档转 Markdown", [
+            f"Input: {input_file}",
+            f"Type: {input_type}",
+            "Output: 自动检测标题后确定...",
+        ])
+        title = run_doc_pipeline(
+            input_file, temp_output, args.keep_intermediate, args.verbose,
+            page_url=args.page_url, cleanup_source=args.cleanup_source
+        )
+        default_name = "未命名文档.md"
+        name = title
+    else:
+        _print_banner("Tencent Converter - 腾讯表格转 Markdown", [
+            f"Input: {input_file}",
+            f"Type: {input_type}",
+            "Output: 自动检测子表名称后确定...",
+        ])
+        pad_title, sheet_name = run_sheet_pipeline(
+            input_file, temp_output, args.verbose,
+            cleanup_source=args.cleanup_source,
+            sheet_name=args.sheet_name,
+        )
+        default_name = "未命名表格.md"
+        name = sheet_name or pad_title
+
+    # 确定输出文件名（使用当前目录，与表格转换一致）
+    output_file = Path(".") / (f"{sanitize_filename(name)}.md" if name else default_name)
+    temp_output.rename(output_file.resolve())
+
+    print("\n" + "=" * 60)
+    print(f"Conversion complete: {output_file}")
+    print("=" * 60)
+
+    _cleanup_file(temp_json_file, args.verbose, "temp file")
 
 
 def main() -> None:
@@ -501,10 +456,7 @@ def main() -> None:
         print("错误: 必须提供 input 文件路径或 --url 参数")
         sys.exit(1)
 
-    # 验证输出参数
-    if not args.output and not args.output_dir:
-        print("错误: 必须提供 -o/--output 或 --output-dir 参数")
-        sys.exit(1)
+    # 注意：-o 参数现在是可选的，文档类型会自动使用标题作为文件名
 
     # 处理 URL 模式
     temp_json_file = None
@@ -583,22 +535,19 @@ def main() -> None:
             input_type = detect_data_type(data)
 
     # 确定输出模式
-    use_multi_output = args.output_dir and input_type == "sheet"
+    use_multi_output = (args.all_tabs or args.output_dir) and input_type == "sheet"
 
     if use_multi_output:
-        output_dir = Path(args.output_dir)
+        # 多表模式
+        output_dir = Path(args.output_dir) if args.output_dir else Path(".")
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        print("=" * 60)
-        print("Tencent Converter - 腾讯表格转 Markdown (多工作表)")
-        print("=" * 60)
-        print(f"Input: {input_file}")
-        print(f"Output Dir: {output_dir}")
-        print(f"Type: {input_type}")
+        info_lines = [f"Input: {input_file}", f"Output Dir: {output_dir}", f"Type: {input_type}"]
         if args.sheet_name:
-            print(f"Sheet Name: {args.sheet_name}")
+            info_lines.append(f"Sheet Name: {args.sheet_name}")
         if args.cleanup_source:
-            print("Cleanup source: enabled")
+            info_lines.append("Cleanup source: enabled")
+        _print_banner("Tencent Converter - 腾讯表格转 Markdown (多工作表)", info_lines)
 
         output_files = run_sheet_multi_output(
             input_file, output_dir,
@@ -610,31 +559,23 @@ def main() -> None:
         print("\n" + "=" * 60)
         print(f"Conversion complete: {len(output_files)} files generated")
         print("=" * 60)
-    else:
-        if not args.output:
-            print("错误: 单文件模式需要 -o/--output 参数")
-            sys.exit(1)
 
+    elif args.output:
+        # 单文件模式（指定输出路径）
         output_file = Path(args.output)
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
-        print("=" * 60)
-        print("Tencent Converter - 腾讯文档/表格转 Markdown")
-        print("=" * 60)
-        print(f"Input: {input_file}")
-        print(f"Output: {output_file}")
-        print(f"Type: {input_type}")
-
+        info_lines = [f"Input: {input_file}", f"Output: {output_file}", f"Type: {input_type}"]
         if input_type == "doc":
-            print(f"Keep intermediate: {args.keep_intermediate}")
+            info_lines.append(f"Keep intermediate: {args.keep_intermediate}")
             if args.page_url:
-                print(f"Page URL: {args.page_url}")
+                info_lines.append(f"Page URL: {args.page_url}")
         if args.sheet_name:
-            print(f"Sheet Name: {args.sheet_name}")
+            info_lines.append(f"Sheet Name: {args.sheet_name}")
         if args.cleanup_source:
-            print("Cleanup source: enabled")
+            info_lines.append("Cleanup source: enabled")
+        _print_banner("Tencent Converter - 腾讯文档/表格转 Markdown", info_lines)
 
-        # 根据类型运行不同的流水线
         if input_type == "sheet":
             run_sheet_pipeline(
                 input_file, output_file, args.verbose,
@@ -651,11 +592,13 @@ def main() -> None:
         print(f"Conversion complete: {output_file}")
         print("=" * 60)
 
+    else:
+        # 自动命名输出模式
+        _run_auto_output_conversion(input_file, input_type, args, temp_json_file)
+        return
+
     # 清理临时文件
-    if temp_json_file and temp_json_file.exists():
-        temp_json_file.unlink()
-        if args.verbose:
-            print(f"[Cleanup] Removed temp file: {temp_json_file}")
+    _cleanup_file(temp_json_file, args.verbose, "temp file")
 
 
 if __name__ == "__main__":

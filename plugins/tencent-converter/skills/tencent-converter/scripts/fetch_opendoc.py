@@ -11,12 +11,7 @@ import requests
 
 
 def parse_url(url: str) -> tuple[str, str]:
-    """从 URL 提取 id 和 scode 参数
-
-    支持格式:
-    - https://doc.weixin.qq.com/doc/{id}?scode={scode}
-    - https://doc.weixin.qq.com/doc/{id}
-    """
+    """从 URL 提取 id 和 scode 参数"""
     # 尝试匹配带 scode 的格式
     match = re.search(r'/doc/([^?/]+)\?scode=([^&]+)', url)
     if match:
@@ -31,13 +26,7 @@ def parse_url(url: str) -> tuple[str, str]:
 
 
 def parse_cookie_file(cookie_file: Path) -> dict:
-    """解析 cookie 文件
-
-    支持格式:
-    1. Netscape 格式 (每行: domain flag path secure name value)
-    2. 原始格式 (name=value; name2=value2)
-    3. 每行一个 name=value
-    """
+    """解析 cookie 文件，支持 Netscape 和原始格式"""
     cookies = {}
     content = cookie_file.read_text().strip()
 
@@ -46,52 +35,33 @@ def parse_cookie_file(cookie_file: Path) -> dict:
         if not line or line.startswith('#'):
             continue
 
-        # 尝试 Netscape 格式: domain flag path secure expiry name value
+        # Netscape 格式: domain flag path secure expiry name value
         parts = line.split('\t')
         if len(parts) >= 7:
             cookies[parts[5]] = parts[6]
         elif '=' in line:
-            # 尝试原始格式: name=value; name2=value2 或单个 name=value
-            if ';' in line:
-                for pair in line.split(';'):
-                    if '=' in pair:
-                        name, value = pair.strip().split('=', 1)
-                        cookies[name] = value
-            else:
-                name, value = line.split('=', 1)
-                cookies[name] = value
+            # 原始格式: name=value; name2=value2 或单个 name=value
+            pairs = line.split(';') if ';' in line else [line]
+            for pair in pairs:
+                if '=' in pair:
+                    name, value = pair.strip().split('=', 1)
+                    cookies[name] = value
 
     return cookies
 
 
 def parse_ejs_response(text: str, verbose: bool = False) -> dict:
-    """解析 EJS 分块格式响应
-
-    EJS 格式 (可能有多个块):
-    head
-    json
-    <length>
-    <json content>
-    [head
-    json
-    <length>
-    <json content>
-    ...]
-
-    只解析第一个 JSON 块，合并多个块的 topLevel 字段。
-    """
+    """解析 EJS 分块格式响应，合并多个块的顶层字段"""
     if not text.startswith('head\njson\n'):
-        raise ValueError(f"未知的响应格式，期望 EJS")
+        raise ValueError("未知的响应格式，期望 EJS")
 
     result = {}
     pos = 0
 
     while pos < len(text):
-        # 找到下一个块
         if not text[pos:].startswith('head\njson\n'):
             break
 
-        # 解析块头
         parts = text[pos:].split('\n', 3)
         if len(parts) < 4:
             break
@@ -101,7 +71,6 @@ def parse_ejs_response(text: str, verbose: bool = False) -> dict:
         except ValueError:
             break
 
-        # 提取 JSON 内容
         json_content = parts[3][:length] if length > 0 else parts[3]
 
         try:
@@ -109,7 +78,7 @@ def parse_ejs_response(text: str, verbose: bool = False) -> dict:
             if verbose:
                 print(f"解析块: {pos}, 长度: {length}, keys: {list(data.keys())[:5]}")
 
-            # 合并数据 - 第一个块作为基础，后续块合并顶层字段
+            # 合并数据
             if not result:
                 result = data
             else:
@@ -122,7 +91,6 @@ def parse_ejs_response(text: str, verbose: bool = False) -> dict:
         except json.JSONDecodeError:
             pass
 
-        # 移动到下一个块
         pos += len('head\njson\n') + len(parts[2]) + 1 + length
 
     if not result:

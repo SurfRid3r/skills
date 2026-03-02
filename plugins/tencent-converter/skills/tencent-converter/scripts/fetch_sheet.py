@@ -15,6 +15,7 @@ if str(_SCRIPT_DIR) not in sys.path:
 import requests
 
 from sheet_enums import TabInfo
+from fetch_opendoc import parse_cookie_file, parse_ejs_response
 
 
 def parse_sheet_url(url: str) -> tuple[str, str, str]:
@@ -252,104 +253,15 @@ def fetch_all_sheets(
 
 
 def parse_cookie_file(cookie_file: Path) -> dict:
-    """解析 cookie 文件
-
-    支持格式:
-    1. Netscape 格式 (每行: domain flag path secure name value)
-    2. 原始格式 (name=value; name2=value2)
-    3. 每行一个 name=value
-    """
-    cookies = {}
-    content = cookie_file.read_text().strip()
-
-    for line in content.split('\n'):
-        line = line.strip()
-        if not line or line.startswith('#'):
-            continue
-
-        # 尝试 Netscape 格式: domain flag path secure expiry name value
-        parts = line.split('\t')
-        if len(parts) >= 7:
-            cookies[parts[5]] = parts[6]
-        elif '=' in line:
-            # 尝试原始格式: name=value; name2=value2 或单个 name=value
-            if ';' in line:
-                for pair in line.split(';'):
-                    if '=' in pair:
-                        name, value = pair.strip().split('=', 1)
-                        cookies[name] = value
-            else:
-                name, value = line.split('=', 1)
-                cookies[name] = value
-
-    return cookies
+    """解析 cookie 文件，支持 Netscape 和原始格式"""
+    from fetch_opendoc import parse_cookie_file as _parse_cookie_file
+    return _parse_cookie_file(cookie_file)
 
 
 def parse_ejs_response(text: str, verbose: bool = False) -> dict:
-    """解析 EJS 分块格式响应
-
-    EJS 格式 (可能有多个块):
-    head
-    json
-    <length>
-    <json content>
-    [head
-    json
-    <length>
-    <json content>
-    ...]
-
-    只解析第一个 JSON 块，合并多个块的 topLevel 字段。
-    """
-    if not text.startswith('head\njson\n'):
-        raise ValueError(f"未知的响应格式，期望 EJS")
-
-    result = {}
-    pos = 0
-
-    while pos < len(text):
-        # 找到下一个块
-        if not text[pos:].startswith('head\njson\n'):
-            break
-
-        # 解析块头
-        parts = text[pos:].split('\n', 3)
-        if len(parts) < 4:
-            break
-
-        try:
-            length = int(parts[2])
-        except ValueError:
-            break
-
-        # 提取 JSON 内容
-        json_content = parts[3][:length] if length > 0 else parts[3]
-
-        try:
-            data = json.loads(json_content)
-            if verbose:
-                print(f"解析块: {pos}, 长度: {length}, keys: {list(data.keys())[:5]}")
-
-            # 合并数据 - 第一个块作为基础，后续块合并顶层字段
-            if not result:
-                result = data
-            else:
-                for key, value in data.items():
-                    if key not in result:
-                        result[key] = value
-                    elif isinstance(result[key], dict) and isinstance(value, dict):
-                        result[key].update(value)
-
-        except json.JSONDecodeError:
-            pass
-
-        # 移动到下一个块
-        pos += len('head\njson\n') + len(parts[2]) + 1 + length
-
-    if not result:
-        raise ValueError("未能从 EJS 响应中解析出任何数据")
-
-    return result
+    """解析 EJS 分块格式响应"""
+    from fetch_opendoc import parse_ejs_response as _parse_ejs_response
+    return _parse_ejs_response(text, verbose)
 
 
 def validate_sheet_response(data: dict) -> tuple[bool, str]:
@@ -513,8 +425,7 @@ Cookie 文件格式支持:
         if args.all_tabs:
             # 获取所有工作表
             data = fetch_all_sheets(
-                args.url, cookies, args.verbose,
-                include_hidden=args.include_hidden
+                args.url, cookies, args.verbose
             )
 
             # 仅输出标题

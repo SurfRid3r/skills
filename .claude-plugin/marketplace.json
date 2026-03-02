@@ -41,7 +41,7 @@
     {
       "name": "tencent-converter",
       "description": "腾讯文档转 Markdown 工具 - 支持标题、段落、列表、代码块、图片、表格、超链接",
-      "version": "1.0.0",
+      "version": "2.2.0",
       "author": {
         "name": "SurfRid3r"
       },

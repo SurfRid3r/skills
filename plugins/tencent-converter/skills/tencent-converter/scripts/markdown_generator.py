@@ -59,25 +59,21 @@ class TencentDocToMarkdown:
             elif stype == "list":
                 list_type = section.get("list_type", "bullet")
                 content = section.get("content", "")
-                if content:  # 过滤空列表项
+                if content:
                     prefix = "- " if list_type == "bullet" else "1. "
                     lines.append(f"{prefix}{content}")
 
             elif stype == "code_block":
                 content = section.get("content", "")
-                if content:  # 只在内容非空时输出代码块
-                    lines.append("```")
-                    lines.append(content)
-                    lines.append("```")
+                if content:
+                    lines.extend(["```", content, "```"])
 
             elif stype == "image":
                 info = section.get("image_info", {})
                 url = info.get("url", "")
                 alt = info.get("caption", "image")
-                width = info.get("width")
-                height = info.get("height")
-                if width and height:
-                    alt += f" ({width}x{height})"
+                if info.get("width") and info.get("height"):
+                    alt += f" ({info['width']}x{info['height']})"
                 lines.append(f"![{alt}]({url})")
 
             elif stype == "table":
@@ -134,6 +130,16 @@ class TencentDocToMarkdown:
                 result = result[:start] + f"[{text}]({url})" + result[end:]
 
         return result
+
+    def get_title(self) -> str | None:
+        """获取文档标题（第一个 heading 的内容）"""
+        sections = self.data.get("document", {}).get("sections", [])
+        for section in sections:
+            if section.get("type") == "heading":
+                content = section.get("content", "").strip()
+                if content:
+                    return content
+        return None
 
     def get_statistics(self) -> dict[str, Any]:
         """获取转换统计信息"""

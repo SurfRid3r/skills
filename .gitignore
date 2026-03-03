@@ -91,3 +91,4 @@ Thumbs.db
 # Token file with sensitive credentials
 .dida_token.json
 cookies.txt
+.claude/

@@ -13,6 +13,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,6 +26,7 @@ try:
         is_heading_style,
         get_style_name
     )
+    from .constants import TIMESTAMP_MIN, TIMESTAMP_MAX
 except ImportError:
     from enums import ControlChars
     from style_definitions import (
@@ -33,6 +35,7 @@ except ImportError:
         is_heading_style,
         get_style_name
     )
+    from utils import TIMESTAMP_MIN, TIMESTAMP_MAX
 
 
 @dataclass
@@ -68,14 +71,19 @@ class Section:
 class Document:
     """语义化文档"""
     sections: list[Section]
+    metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "version": 2,
             "document": {
                 "sections": [self._section_to_dict(s) for s in self.sections]
             }
         }
+        # 添加 metadata（如果有）
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
 
     def _section_to_dict(self, section: Section) -> dict:
         result = {"type": section.type, "content": section.content}
@@ -108,6 +116,7 @@ class FormatParser:
     def __init__(self, intermediate_data: dict):
         self.data = intermediate_data
         self.mutations = intermediate_data.get("mutations", [])
+        self.metadata = intermediate_data.get("metadata", {})  # 从 opendoc 传递的元数据
         self.text = ""
         self.images = []
         self.position = 0
@@ -131,7 +140,41 @@ class FormatParser:
         self._collect_textbox_content_ranges()
         self._textbox_ranges = self._collect_textbox_ranges()
         sections = self._parse_sections()
-        return Document(sections=sections)
+
+        # 提取时间戳元数据
+        timestamps = self._extract_timestamps()
+
+        return Document(sections=sections, metadata={
+            'pad_title': self.metadata.get('pad_title'),
+            'revision': self.metadata.get('revision'),
+            'created': timestamps.get('created'),
+            'modified': timestamps.get('modified'),
+        })
+
+    def _extract_timestamps(self) -> dict:
+        """从 AuthorInfo 中提取创建和修改时间戳 (单次遍历优化版)"""
+        min_ts = None
+        max_ts = None
+
+        for mut in self.mutations:
+            author_info = mut.get("author_info", {})
+            ts = author_info.get("timestamp")
+            if ts and isinstance(ts, (int, float)):
+                # 验证时间戳范围 (2020-2033年)
+                if TIMESTAMP_MIN <= ts <= TIMESTAMP_MAX:
+                    ts_int = int(ts)
+                    if min_ts is None or ts_int < min_ts:
+                        min_ts = ts_int
+                    if max_ts is None or ts_int > max_ts:
+                        max_ts = ts_int
+
+        if min_ts is None:
+            return {}
+
+        created = datetime.fromtimestamp(min_ts / 1000).strftime('%Y-%m-%d')
+        modified = datetime.fromtimestamp(max_ts / 1000).strftime('%Y-%m-%d')
+
+        return {'created': created, 'modified': modified}
 
     def _build_style_map(self):
         """构建位置到标题级别的映射"""
@@ -925,47 +968,69 @@ class FormatParser:
         )
 
     def _parse_table_row(self) -> list[str]:
-        """解析单个表格行，返回单元格内容列表"""
+        """解析单个表格行，返回单元格内容列表
+
+        单元格内容可能包含 HYPERLINK，需要转换为 Markdown 链接格式
+        """
         cells = []
-        current_cell = []
+        current_cell_parts = []  # 使用列表存储单元格内容的各部分
 
         while self.position < len(self.text):
             code = ord(self.text[self.position])
 
             if code == ControlChars.PARAGRAPH_SEP:
                 # 单元格内容结束
-                cells.append(''.join(current_cell).strip())
-                current_cell = []
+                cells.append(self._join_cell_content(current_cell_parts))
+                current_cell_parts = []
                 self.position += 1
             elif code == ControlChars.TABLE_MARKER:
                 # 检查是否是行标记 (0x07 0x06) - 表示当前行结束
                 if (self.position + 1 < len(self.text) and
                     ord(self.text[self.position + 1]) == ControlChars.AUTHOR_FIELD_VALUE):
                     # 保存当前单元格，但不消耗 TABLE_MARKER
-                    if current_cell:
-                        cells.append(''.join(current_cell).strip())
+                    if current_cell_parts:
+                        cells.append(self._join_cell_content(current_cell_parts))
                     break
                 # 列分隔符 - 保存单元格并继续
-                if current_cell:
-                    cells.append(''.join(current_cell).strip())
-                    current_cell = []
+                if current_cell_parts:
+                    cells.append(self._join_cell_content(current_cell_parts))
+                current_cell_parts = []
                 self.position += 1
             elif code == ControlChars.COMPARISON_MARKER:
                 # 表格结束
-                if current_cell:
-                    cells.append(''.join(current_cell).strip())
+                if current_cell_parts:
+                    cells.append(self._join_cell_content(current_cell_parts))
                 break
             elif code == ControlChars.AUTHOR_FIELD_VALUE:
                 # 没有先出现 TABLE_MARKER 的行标记 - 行结束
                 break
+            elif code == ControlChars.HYPERLINK_START:
+                # 解析 HYPERLINK 并转换为 Markdown 格式
+                hl_info = self._parse_hyperlink()
+                if hl_info:
+                    url = hl_info.get("url", "")
+                    display_text = hl_info.get("display_text", "")
+                    if url and display_text:
+                        # 转换为 Markdown 链接格式
+                        current_cell_parts.append(f"[{display_text}]({url})")
+                    elif display_text:
+                        current_cell_parts.append(display_text)
+                continue
             else:
-                current_cell.append(self.text[self.position])
+                current_cell_parts.append(self.text[self.position])
                 self.position += 1
 
-        if current_cell:
-            cells.append(''.join(current_cell).strip())
+        if current_cell_parts:
+            cells.append(self._join_cell_content(current_cell_parts))
 
         return cells
+
+    def _join_cell_content(self, parts: list[str]) -> str:
+        """合并单元格内容部分并清理"""
+        content = ''.join(parts).strip()
+        # 清理控制字符
+        content = ''.join(c for c in content if ord(c) >= 32 or c in ('\t',))
+        return content
 
     def _parse_paragraph(self) -> Optional[Section]:
         """解析段落，包含 HYPERLINK 处理"""

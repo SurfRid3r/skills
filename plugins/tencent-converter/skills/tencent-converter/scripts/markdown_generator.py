@@ -10,6 +10,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+try:
+    from .utils import generate_front_matter
+except ImportError:
+    from utils import generate_front_matter
+
 
 class TencentDocToMarkdown:
     """腾讯文档到 Markdown 转换器"""
@@ -23,19 +28,31 @@ class TencentDocToMarkdown:
         with open(self.result_path, 'r', encoding='utf-8') as f:
             self.data = json.load(f)
 
-    def convert(self, page_url: str | None = None) -> str:
+    def convert(self, page_url: str | None = None, doc_type: str = "doc") -> str:
         """执行转换
 
         Args:
             page_url: 文档在线链接，用于生成 meta 信息
+            doc_type: 文档类型 ("doc" 或 "sheet")
         """
         self.load()
         sections = self.data.get("document", {}).get("sections", [])
+        metadata = self.data.get("metadata", {})
         content = self._sections_to_markdown(sections)
 
-        if page_url:
-            meta = f"---\npageUrl: {page_url}\n---\n\n"
-            content = meta + content
+            # 生成 YAML Front Matter
+        title = metadata.get("pad_title") or self.get_title()
+        front_matter = generate_front_matter(
+            title=title,
+            source=page_url,
+            doc_type=doc_type,
+            created=metadata.get("created"),
+            modified=metadata.get("modified"),
+            revision=metadata.get("revision"),
+            trailing_newlines=1,
+        )
+        if front_matter:
+            content = front_matter + content
 
         return content
 

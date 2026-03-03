@@ -11,9 +11,11 @@ from pathlib import Path
 try:
     from .sheet_enums import SheetData, SpreadsheetData, CellData
     from .sheet_parser import parse_sheet_data
+    from .utils import generate_front_matter, escape_cell
 except ImportError:
     from sheet_enums import SheetData, SpreadsheetData, CellData
     from sheet_parser import parse_sheet_data
+    from utils import generate_front_matter, escape_cell
 
 
 class SheetToMarkdown:
@@ -22,9 +24,21 @@ class SheetToMarkdown:
     def __init__(self, spreadsheet: SpreadsheetData):
         self.spreadsheet = spreadsheet
 
-    def convert(self) -> str:
+    def convert(self, page_url: str | None = None, metadata: dict | None = None) -> str:
         """转换所有工作表为 Markdown"""
         parts = []
+
+        # 生成 YAML Front Matter
+        if metadata or page_url:
+            front_matter = generate_front_matter(
+                title=metadata.get("title") if metadata else None,
+                source=page_url,
+                doc_type="sheet",
+                created=metadata.get("created") if metadata else None,
+                modified=metadata.get("modified") if metadata else None,
+            )
+            parts.append(front_matter)
+
         for i, sheet in enumerate(self.spreadsheet.sheets):
             if i > 0:
                 parts.append("\n\n---\n\n")
@@ -53,18 +67,17 @@ class SheetToMarkdown:
         """格式化单元格"""
         if cell.hyperlink:
             display = cell.hyperlink.display_text or cell.value
-            return f"[{self._escape_cell(display)}]({cell.hyperlink.url})"
-        return self._escape_cell(cell.value)
-
-    def _escape_cell(self, text: str) -> str:
-        """转义单元格特殊字符"""
-        if not text:
-            return ""
-        text = text.replace("\n", "<br>").replace("|", "\\|")
-        return "".join(c if ord(c) >= 32 or ord(c) > 127 else " " for c in text)
+            return f"[{escape_cell(display)}]({cell.hyperlink.url})"
+        return escape_cell(cell.value)
 
 
-def convert_sheet_to_markdown(input_file: str, output_file: str, verbose: bool = False) -> str:
+def convert_sheet_to_markdown(
+    input_file: str,
+    output_file: str,
+    verbose: bool = False,
+    page_url: str | None = None,
+    metadata: dict | None = None
+) -> str:
     """转换表格为 Markdown，返回 Markdown 字符串"""
     if verbose:
         print(f"  输入: {input_file}")
@@ -75,7 +88,7 @@ def convert_sheet_to_markdown(input_file: str, output_file: str, verbose: bool =
         print(f"  工作表数量: {len(spreadsheet.sheets)}")
 
     converter = SheetToMarkdown(spreadsheet)
-    markdown = converter.convert()
+    markdown = converter.convert(page_url, metadata)
 
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)

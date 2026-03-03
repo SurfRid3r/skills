@@ -22,11 +22,12 @@ def convert_to_markdown(
     output_file: str | None,
     verbose: bool = False,
     stats: bool = False,
-    page_url: str | None = None
+    page_url: str | None = None,
+    doc_type: str = "doc"
 ) -> tuple[str, str | None]:
     """将 result.json 转换为 Markdown，返回 (Markdown 内容, 文档标题) 元组"""
     converter = TencentDocToMarkdown(input_file)
-    markdown = converter.convert(page_url)
+    markdown = converter.convert(page_url, doc_type)
     title = converter.get_title()
 
     if verbose or stats:

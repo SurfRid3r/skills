@@ -1024,7 +1024,9 @@ def parse_opendoc(input_file: str, output_prefix: str, verbose: bool = False) ->
     with open(input_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    text_data = data['clientVars']['collab_client_vars']['initialAttributedText']['text'][0]
+    client_vars = data.get('clientVars', {})
+    collab_vars = client_vars.get('collab_client_vars', {})
+    text_data = collab_vars['initialAttributedText']['text'][0]
 
     if verbose:
         print(f"  原始数据长度: {len(text_data)} 字符")
@@ -1035,6 +1037,12 @@ def parse_opendoc(input_file: str, output_prefix: str, verbose: bool = False) ->
     if verbose:
         print(f"  Mutation 数量: {parsed['mutations_count']}")
         print(f"  图片数量: {parsed['image_count']}")
+
+    # 提取 metadata
+    parsed['metadata'] = {
+        'pad_title': client_vars.get('padTitle'),
+        'revision': collab_vars.get('rev'),
+    }
 
     # 保存输出
     json_output = generate_json(parsed)

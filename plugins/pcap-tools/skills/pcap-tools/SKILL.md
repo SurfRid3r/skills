@@ -39,6 +39,31 @@ pip install scapy
 
 ***
 
+## 工具选择建议：tshark vs 本工具
+
+**如果用户已安装 tshark（Wireshark 命令行工具），以下场景建议优先使用 tshark：**
+
+| 场景 | 推荐工具 |
+|------|----------|
+| 协议解析（HTTP/DNS/TLS/SMB 等） | **tshark** - 协议解码更准确完整 |
+| 流量统计汇总（协议分布、会话统计） | **tshark** - 内置强大的统计功能 |
+| 复杂过滤表达式 | **tshark** - BPF/display filter 更灵活 |
+| 快速查看数据包详情 | **tshark** - 输出格式丰富（JSON/文本/PSML） |
+
+**本工具更适合的场景：**
+
+| 场景 | 原因 |
+|------|------|
+| 修改 PCAP 内容（IP/端口/HTTP Body） | tshark 不支持内容修改 |
+| 从 JSON 重建 PCAP | 本工具特有功能 |
+| 合并多个 PCAP 文件 | tshark 无此功能 |
+| 提取特定流的 payload | 本工具输出更直观 |
+| 无 tshark 环境 | 本工具仅需 Python + scapy |
+
+**优先级策略**：分析类任务优先尝试 tshark，修改/构建类任务使用本工具。
+
+***
+
 ## IP 提取分析工作流
 
 从 PCAP 文件中提取**攻击场景的关键流 IP**。

@@ -1,6 +1,6 @@
 {
   "name": "pcap-tools",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "PCAP 文件处理工具 - 流量分析、IP 修改、HTTP Host/Header/Body 修改、Payload 提取、PCAP 合并、JSON 转 PCAP",
   "author": {
     "name": "SurfRid3r"

@@ -410,7 +410,7 @@ def _run_auto_output_conversion(
             sheet_name=args.sheet_name,
             page_url=args.page_url,
         )
-        default_name = DEFAULT_SHEET_NAME
+        default_name = DEFAULT_SHEET_OUTPUT_NAME
         name = sheet_name or pad_title
 
     # 确定输出文件名（使用当前目录，与表格转换一致）
@@ -421,7 +421,8 @@ def _run_auto_output_conversion(
     print(f"Conversion complete: {output_file}")
     print("=" * 60)
 
-    _cleanup_file(temp_json_file, args.verbose, "temp file")
+    if temp_json_file:
+        _cleanup_file(temp_json_file, args.verbose, "temp file")
 
 
 def main() -> None:
@@ -715,7 +716,8 @@ def main() -> None:
         return
 
     # 清理临时文件
-    _cleanup_file(temp_json_file, args.verbose, "temp file")
+    if temp_json_file:
+        _cleanup_file(temp_json_file, args.verbose, "temp file")
 
 
 if __name__ == "__main__":

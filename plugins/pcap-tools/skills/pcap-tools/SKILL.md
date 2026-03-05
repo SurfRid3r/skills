@@ -221,16 +221,7 @@ python scripts/pcap_merge.py file1.pcap file2.pcap --no-adjust-ts
 
 ## JSON 转 PCAP 工作流
 
-将 JSON 格式的 HTTP 数据转换为 PCAP 文件。
-
-### JSON 输入格式
-
-```json
-{
-  "request_data_base64": "R0VUIC8gSFRUUC8xLjENCg==",
-  "response_data_base64": "SFRUUC8xLjEgMjAwIE9LDQo="
-}
-```
+将 JSON 格式的 HTTP 数据转换为 PCAP 文件，支持批量流量生成。
 
 ### 命令示例
 
@@ -240,28 +231,91 @@ python scripts/pcap_build.py traffic.json
 
 # 指定输出路径
 python scripts/pcap_build.py traffic.json -o output.pcap
-
-# 使用网络类型预设
-python scripts/pcap_build.py traffic.json --net-type lan-wan
-
-# 自定义网络参数
-python scripts/pcap_build.py traffic.json \
-    --src-ip 10.0.0.1 \
-    --dst-ip 192.168.1.100 \
-    --dst-port 8080
-
-# 长连接模式
-python scripts/pcap_build.py traffic.json -k
 ```
 
-### 网络类型预设
+**命令行极简**：只需指定输入 JSON 和可选的输出路径，所有配置都在 JSON 中完成。
 
-| 预设值 | 源 IP | 目的 IP | 说明 |
-|--------|-------|---------|------|
-| `wan-lan` | 外网 | 内网 | 默认 |
-| `lan-wan` | 内网 | 外网 | 内部访问外部 |
-| `wan-wan` | 外网 | 外网 | 外部到外部 |
-| `lan-lan` | 内网 | 内网 | 内部通信 |
+### JSON 输入格式
+
+```json
+{
+  "options": {
+    "keep_alive": false,
+    "interval": 0.01,
+    "interval_randomness": 0.5,
+    "mtu": 1500,
+    "flow_gap": 0.5
+  },
+  "traffic_flows": [
+    {
+      "network_params": {
+        "src_ip": "10.0.0.1",
+        "dst_ip": "192.168.1.100",
+        "src_port": 54321,
+        "dst_port": 80
+      },
+      "packets": [
+        {
+          "request_data_base64": "R0VUIC8gSFRUUC8xLjENCg==",
+          "response_data_base64": "SFRUUC8xLjEgMjAwIE9LDQo="
+        }
+      ]
+    }
+  ]
+}
+```
+
+### options 字段（全部可选）
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `keep_alive` | `false` | 长连接模式（true 时复用同一 TCP 连接） |
+| `interval` | `0.01` | 包时间间隔（秒） |
+| `interval_randomness` | `0.5` | 间隔随机度（0-1） |
+| `mtu` | `1500` | MTU 大小（字节） |
+| `flow_gap` | `0.5` | TCP 连接之间的时间间隔（秒） |
+
+### network_params 字段
+
+| 字段 | 必需 | 说明 |
+|------|------|------|
+| `src_ip` | 是 | 源 IP（或 `WAN`/`LAN` 随机生成） |
+| `dst_ip` | 是 | 目的 IP（或 `WAN`/`LAN` 随机生成） |
+| `src_port` | 否 | 源端口（默认随机，或 `CLIENT`） |
+| `dst_port` | 否 | 目的端口（默认 80） |
+| `src_mac` | 否 | 源 MAC（默认随机，或 `RANDOM`） |
+| `dst_mac` | 否 | 目的 MAC（默认随机，或 `RANDOM`） |
+
+### 连接模式说明
+
+- **短连接模式**（`keep_alive: false`，默认）：每个 HTTP 请求完成后执行四次挥手，下一个请求重新建立连接
+- **长连接模式**（`keep_alive: true`）：`packets` 数组中的所有 HTTP 请求/响应对复用同一个 TCP 连接
+
+### 批量流量示例
+
+```json
+{
+  "options": {
+    "keep_alive": true,
+    "flow_gap": 1.0
+  },
+  "traffic_flows": [
+    {
+      "network_params": {"src_ip": "10.0.0.1", "dst_ip": "192.168.1.100"},
+      "packets": [
+        {"request_data_base64": "...", "response_data_base64": "..."},
+        {"request_data_base64": "...", "response_data_base64": "..."}
+      ]
+    },
+    {
+      "network_params": {"src_ip": "10.0.0.2", "dst_ip": "192.168.1.100"},
+      "packets": [
+        {"request_data_base64": "...", "response_data_base64": "..."}
+      ]
+    }
+  ]
+}
+```
 
 ***
 

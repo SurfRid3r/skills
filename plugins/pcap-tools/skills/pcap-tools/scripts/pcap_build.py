@@ -10,61 +10,30 @@ import argparse
 import base64
 import binascii
 import json
-import os
 import random
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from scapy.all import Ether, IP, TCP, Raw, wrpcap
 
 from utils.network import (
-    validate_ip_address,
-    validate_mac_address,
-    generate_random_public_ip,
-    generate_random_private_ip,
+    get_ip_generator,
     generate_random_mac,
     generate_random_client_port,
-    NETWORK_TYPE_PRESETS,
-    get_ip_generator,
     DEFAULT_HTTP_PORT,
-    MIN_EPHEMERAL_PORT,
-    MAX_EPHEMERAL_PORT,
 )
 
 
-class FileWalker:
-    """文件遍历器：递归遍历指定目录下的所有文件
-
-    支持按文件后缀过滤，自动创建对应的输出目录结构
-    """
-
-    def __init__(self, input_dir: str, output_dir: Optional[str] = None, suffix: Optional[str] = None):
-        self.input_dir = input_dir
-        if output_dir:
-            self.output_dir = output_dir
-        else:
-            clean_input_path = input_dir.rstrip('/\\')
-            self.output_dir = f"{clean_input_path}_{int(time.time())}"
-        self.suffix = suffix
-
-        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
-
-    def __iter__(self):
-        return self.generate_paths()
-
-    def generate_paths(self):
-        """生成输入和输出文件路径的迭代器"""
-        for root, dirs, files in os.walk(self.input_dir):
-            for file in files:
-                if self.suffix is None or file.endswith(self.suffix):
-                    input_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(input_path, self.input_dir)
-                    output_path = os.path.join(self.output_dir, relative_path)
-                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                    yield input_path, output_path, file
+# 默认选项配置
+DEFAULT_OPTIONS = {
+    'keep_alive': False,
+    'interval': 0.01,
+    'interval_randomness': 0.5,
+    'mtu': 1500,
+    'flow_gap': 0.5
+}
 
 
 class PacketBuilder:
@@ -97,6 +66,7 @@ class PacketBuilder:
         self.interval_randomness = interval_randomness
         self.buffers = []
         self.mtu = mtu
+        self.max_payload_size = mtu - 40  # IP(20) + TCP(20) headers
         self.is_keep_alive = is_keep_alive
         self.current_timestamp = start_timestamp if start_timestamp else time.time()
 
@@ -114,12 +84,7 @@ class PacketBuilder:
         offset = 0
 
         while offset < data_len:
-            # 计算当前分片大小（考虑 IP 和 TCP 头部）
-            ip_header_size = 20
-            tcp_header_size = 20
-            max_payload_size = self.mtu - ip_header_size - tcp_header_size
-
-            chunk_size = min(max_payload_size, data_len - offset)
+            chunk_size = min(self.max_payload_size, data_len - offset)
             chunk = data[offset:offset + chunk_size]
             chunks.append(chunk)
             offset += chunk_size
@@ -291,9 +256,6 @@ class PacketBuilder:
         if isinstance(http_flows, dict):
             http_flows = [http_flows]
 
-        # 清空缓冲区
-        self.buffers = []
-
         # 插入三次握手
         self.insert_three_way_handshake()
 
@@ -317,16 +279,24 @@ class PacketBuilder:
         return self.buffers
 
 
-def extract_http_flows_from_json(
+def extract_traffic_flows_from_json(
     json_data: dict,
-    request_field_key: str,
-    response_field_key: str
+    request_field_key: str = 'request_data_base64',
+    response_field_key: str = 'response_data_base64'
 ) -> list:
-    """从 JSON 数据中提取 HTTP 流量
+    """从 JSON 数据中提取流量（新格式）
 
-    支持两种 JSON 格式：
-      1. 顶层字典直接包含请求/响应字段
-      2. 顶层字典包含 'traffic_flows' 列表，每项包含请求/响应字段
+    支持新格式：
+    {
+      "traffic_flows": [
+        {
+          "network_params": {...},
+          "packets": [
+            {"request_data_base64": "...", "response_data_base64": "..."}
+          ]
+        }
+      ]
+    }
 
     Args:
         json_data: JSON 数据字典
@@ -334,333 +304,204 @@ def extract_http_flows_from_json(
         response_field_key: 响应字段的键名
 
     Returns:
-        HTTP 流量列表，格式为 [{'request': bytes, 'response': bytes}, ...]
+        列表，每项包含 {'network_params': dict, 'packets': [{'request': bytes, 'response': bytes}]}
 
     Raises:
         ValueError: JSON 数据格式错误
-        KeyError: 缺少必需字段
         binascii.Error: Base64 解码失败
     """
     if not isinstance(json_data, dict):
-        raise ValueError(f"JSON 数据格式错误，期望字典类型，实际类型: {type(json_data).__name__}")
+        raise ValueError(f"JSON 数据格式错误，期望字典类型")
 
-    traffic_items = json_data.get('traffic_flows', [json_data])
-    http_flows = []
+    traffic_flows_raw = json_data.get('traffic_flows', [])
+    if not traffic_flows_raw:
+        raise ValueError("JSON 中缺少 traffic_flows 数组或数组为空")
 
-    for flow_index, traffic_item in enumerate(traffic_items, 1):
-        request_base64 = traffic_item.get(request_field_key)
-        response_base64 = traffic_item.get(response_field_key)
+    traffic_flows = []
 
-        if not request_base64 or not response_base64:
-            raise KeyError(
-                f"第 {flow_index} 组流量缺少必需字段 '{request_field_key}' 或 '{response_field_key}'"
-            )
+    for flow_index, flow_item in enumerate(traffic_flows_raw, 1):
+        # 提取 network_params（必需）
+        network_params = flow_item.get('network_params')
+        if network_params is None:
+            raise ValueError(f"第 {flow_index} 个流量缺少必需的 network_params")
 
-        try:
-            request_bytes = base64.b64decode(request_base64)
-            response_bytes = base64.b64decode(response_base64)
-        except binascii.Error as e:
-            raise binascii.Error(f"第 {flow_index} 组流量 Base64 解码失败: {e}")
-        except Exception as e:
-            raise Exception(f"第 {flow_index} 组流量解码异常: {type(e).__name__} - {e}")
+        # 验证必需字段
+        if 'src_ip' not in network_params or 'dst_ip' not in network_params:
+            raise ValueError(f"第 {flow_index} 个流量的 network_params 缺少 src_ip 或 dst_ip")
 
-        http_flows.append({
-            'request': request_bytes,
-            'response': response_bytes
+        # 提取 packets 数组
+        packets_raw = flow_item.get('packets', [])
+        if not packets_raw:
+            raise ValueError(f"第 {flow_index} 个流量缺少 packets 数组或数组为空")
+
+        packets = []
+        for pkt_index, pkt_item in enumerate(packets_raw, 1):
+            request_base64 = pkt_item.get(request_field_key)
+            response_base64 = pkt_item.get(response_field_key)
+
+            if not request_base64 or not response_base64:
+                raise ValueError(
+                    f"第 {flow_index} 个流量的第 {pkt_index} 个包缺少 "
+                    f"'{request_field_key}' 或 '{response_field_key}'"
+                )
+
+            try:
+                request_bytes = base64.b64decode(request_base64)
+                response_bytes = base64.b64decode(response_base64)
+            except binascii.Error as e:
+                raise binascii.Error(
+                    f"第 {flow_index} 个流量的第 {pkt_index} 个包 Base64 解码失败: {e}"
+                )
+
+            packets.append({
+                'request': request_bytes,
+                'response': response_bytes
+            })
+
+        traffic_flows.append({
+            'network_params': network_params,
+            'packets': packets
         })
 
-    return http_flows
+    return traffic_flows
 
 
-def generate_network_params(
-    src_ip: Optional[str],
-    dst_ip: Optional[str],
-    src_port: Optional[int],
-    dst_port: Optional[int],
-    src_mac: Optional[str],
-    dst_mac: Optional[str],
-    net_type: str = 'wan-lan'
-) -> dict:
-    """生成网络参数
-
-    根据网络类型预设和用户指定的参数，生成完整的网络五元组。
+def resolve_network_params(network_params: dict) -> dict:
+    """解析网络参数，处理特殊值
 
     Args:
-        src_ip: 源 IP（None 则使用预设）
-        dst_ip: 目的 IP（None 则使用预设）
-        src_port: 源端口（None 则随机客户端端口）
-        dst_port: 目的端口（None 则默认 80）
-        src_mac: 源 MAC（None 则随机）
-        dst_mac: 目的 MAC（None 则随机）
-        net_type: 网络类型预设
+        network_params: 原始网络参数
 
     Returns:
-        包含完整网络参数的字典
+        解析后的网络参数（所有特殊值已转换为具体值）
     """
-    # 获取预设
-    preset_src, preset_dst = NETWORK_TYPE_PRESETS.get(net_type, ('WAN', 'LAN'))
+    resolved = {}
 
-    # 解析源 IP
-    if src_ip is None:
-        src_ip_resolved = get_ip_generator(preset_src)()
-    elif src_ip in ('WAN', 'LAN'):
-        src_ip_resolved = get_ip_generator(src_ip)()
-    else:
-        src_ip_resolved = src_ip
-
-    # 解析目的 IP
-    if dst_ip is None:
-        dst_ip_resolved = get_ip_generator(preset_dst)()
-    elif dst_ip in ('WAN', 'LAN'):
-        dst_ip_resolved = get_ip_generator(dst_ip)()
-    else:
-        dst_ip_resolved = dst_ip
+    # 解析 IP 地址
+    for key in ['src_ip', 'dst_ip']:
+        value = network_params.get(key)
+        if value in ('WAN', 'LAN'):
+            resolved[key] = get_ip_generator(value)()
+        else:
+            resolved[key] = value
 
     # 解析端口
-    if src_port is None:
-        src_port_resolved = generate_random_client_port()
+    src_port = network_params.get('src_port')
+    if src_port is None or src_port == 'CLIENT':
+        resolved['src_port'] = generate_random_client_port()
     else:
-        src_port_resolved = src_port
+        resolved['src_port'] = src_port
 
+    dst_port = network_params.get('dst_port')
     if dst_port is None:
-        dst_port_resolved = DEFAULT_HTTP_PORT
+        resolved['dst_port'] = DEFAULT_HTTP_PORT
     else:
-        dst_port_resolved = dst_port
+        resolved['dst_port'] = dst_port
 
-    # 解析 MAC
-    if src_mac is None or src_mac == 'RANDOM':
-        src_mac_resolved = generate_random_mac()
-    else:
-        src_mac_resolved = src_mac
+    # 解析 MAC 地址
+    for key in ['src_mac', 'dst_mac']:
+        value = network_params.get(key)
+        if value is None or value == 'RANDOM':
+            resolved[key] = generate_random_mac()
+        else:
+            resolved[key] = value
 
-    if dst_mac is None or dst_mac == 'RANDOM':
-        dst_mac_resolved = generate_random_mac()
-    else:
-        dst_mac_resolved = dst_mac
-
-    return {
-        'src_ip': src_ip_resolved,
-        'dst_ip': dst_ip_resolved,
-        'src_port': src_port_resolved,
-        'dst_port': dst_port_resolved,
-        'src_mac': src_mac_resolved,
-        'dst_mac': dst_mac_resolved
-    }
-
-
-def validate_network_params(
-    src_ip: Optional[str],
-    dst_ip: Optional[str],
-    src_port: Optional[int],
-    dst_port: Optional[int],
-    src_mac: Optional[str],
-    dst_mac: Optional[str],
-    interval: float,
-    interval_randomness: float
-) -> None:
-    """校验网络参数
-
-    Raises:
-        SystemExit: 参数不合法时退出程序
-    """
-    # 校验 IP 地址
-    if src_ip and src_ip not in ('WAN', 'LAN'):
-        if not validate_ip_address(src_ip):
-            print(f"错误: 源 IP 地址格式错误: {src_ip}", file=sys.stderr)
-            sys.exit(1)
-
-    if dst_ip and dst_ip not in ('WAN', 'LAN'):
-        if not validate_ip_address(dst_ip):
-            print(f"错误: 目的 IP 地址格式错误: {dst_ip}", file=sys.stderr)
-            sys.exit(1)
-
-    # 校验端口
-    if src_port is not None:
-        if not (1 <= src_port <= MAX_EPHEMERAL_PORT):
-            print(f"错误: 源端口范围错误: {src_port}，应为 1-65535", file=sys.stderr)
-            sys.exit(1)
-
-    if dst_port is not None:
-        if not (1 <= dst_port <= MAX_EPHEMERAL_PORT):
-            print(f"错误: 目的端口范围错误: {dst_port}，应为 1-65535", file=sys.stderr)
-            sys.exit(1)
-
-    # 校验 MAC 地址
-    if src_mac and src_mac != 'RANDOM':
-        normalized_mac = validate_mac_address(src_mac)
-        if normalized_mac is None:
-            print(f"错误: 源 MAC 地址格式错误: {src_mac}", file=sys.stderr)
-            sys.exit(1)
-
-    if dst_mac and dst_mac != 'RANDOM':
-        normalized_mac = validate_mac_address(dst_mac)
-        if normalized_mac is None:
-            print(f"错误: 目的 MAC 地址格式错误: {dst_mac}", file=sys.stderr)
-            sys.exit(1)
-
-    # 校验时间间隔
-    if interval <= 0:
-        print(f"错误: 时间间隔必须大于 0: {interval}", file=sys.stderr)
-        sys.exit(1)
-
-    # 校验随机度
-    if not (0 <= interval_randomness <= 1):
-        print(f"错误: 时间间隔随机度范围错误: {interval_randomness}，应为 0.0-1.0", file=sys.stderr)
-        sys.exit(1)
+    return resolved
 
 
 def build_pcap_from_json(
     input_path: str,
-    output_path: Optional[str] = None,
-    req_key: str = 'request_data_base64',
-    res_key: str = 'response_data_base64',
-    net_type: str = 'wan-lan',
-    src_ip: Optional[str] = None,
-    dst_ip: Optional[str] = None,
-    src_port: Optional[int] = None,
-    dst_port: Optional[int] = None,
-    src_mac: Optional[str] = None,
-    dst_mac: Optional[str] = None,
-    interval: float = 0.01,
-    interval_rand: float = 0.5,
-    keep_alive: bool = False,
-    mtu: int = 1500
+    output_path: Optional[str] = None
 ) -> dict:
-    """将 JSON 文件或目录转换为 PCAP 文件
+    """将 JSON 文件转换为 PCAP 文件
 
     Args:
-        input_path: 输入 JSON 文件或目录路径
-        output_path: 输出文件或目录路径（可选）
-        req_key: JSON 请求字段键
-        res_key: JSON 响应字段键
-        net_type: 网络类型预设
-        src_ip: 源 IP（可选）
-        dst_ip: 目的 IP（可选）
-        src_port: 源端口（可选）
-        dst_port: 目的端口（可选）
-        src_mac: 源 MAC（可选）
-        dst_mac: 目的 MAC（可选）
-        interval: 包时间间隔（秒）
-        interval_rand: 间隔随机度（0-1）
-        keep_alive: 长连接模式
-        mtu: MTU 大小
+        input_path: 输入 JSON 文件路径
+        output_path: 输出文件路径（可选）
 
     Returns:
         包含处理统计的字典
     """
-    # 校验参数
-    validate_network_params(
-        src_ip, dst_ip, src_port, dst_port, src_mac, dst_mac,
-        interval, interval_rand
-    )
-
     # 确定输出路径
     if output_path is None:
         clean_input_path = input_path.rstrip('/\\')
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"{clean_input_path}_{timestamp}"
+        output_path = f"{clean_input_path}_{timestamp}.pcap"
 
-    # 生成网络参数模板
-    network_template = generate_network_params(
-        src_ip, dst_ip, src_port, dst_port, src_mac, dst_mac, net_type
-    )
+    # 读取 JSON 文件
+    try:
+        with open(input_path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"文件不存在: {input_path}")
+    except json.JSONDecodeError as e:
+        raise json.JSONDecodeError(f"JSON 格式错误: {e.msg}", e.doc, e.pos)
+
+    # 合并选项（JSON 中的 options 覆盖默认值）
+    options = {**DEFAULT_OPTIONS, **json_data.get('options', {})}
+
+    # 提取选项参数
+    keep_alive = options['keep_alive']
+    interval = options['interval']
+    interval_rand = options['interval_randomness']
+    mtu = options['mtu']
+    flow_gap = options['flow_gap']
+
+    # 校验时间间隔参数
+    if interval <= 0:
+        raise ValueError(f"时间间隔必须大于 0: {interval}")
+    if not (0 <= interval_rand <= 1):
+        raise ValueError(f"时间间隔随机度范围错误: {interval_rand}，应为 0.0-1.0")
+
+    # 提取流量
+    traffic_flows = extract_traffic_flows_from_json(json_data)
 
     # 输出配置信息
-    print(f"网络类型: {net_type}")
-    print(f"网络配置模板: 源IP:{network_template['src_ip'] if src_ip else '随机'} -> "
-          f"目的IP:{network_template['dst_ip'] if dst_ip else '随机'}")
-    print(f"端口配置: 源端口:{src_port or '随机'} -> 目的端口:{dst_port or DEFAULT_HTTP_PORT}")
+    print(f"流量数量: {len(traffic_flows)} 个 TCP 连接")
+    print(f"连接模式: {'长连接' if keep_alive else '短连接'}")
     print(f"时间间隔: {interval}秒 (随机度: {interval_rand * 100}%)")
     print(f"MTU 大小: {mtu}字节")
-    print(f"连接模式: {'长连接' if keep_alive else '短连接'}")
 
-    # 统计
-    total_files = 0
-    success_files = 0
-    failed_files = []
+    # 构建所有数据包
+    all_packets = []
+    current_timestamp = time.time()
 
-    # 判断是文件还是目录
-    if os.path.isfile(input_path):
-        # 单文件处理
-        input_files = [(input_path, output_path, os.path.basename(input_path))]
-    else:
-        # 目录遍历
-        file_walker = FileWalker(input_path, output_path, suffix='.json')
-        input_files = list(file_walker)
-
-    for input_file_path, output_file_path, file_name in input_files:
-        total_files += 1
-
-        # 为每个文件生成随机的网络五元组
-        random_params = generate_network_params(
-            src_ip, dst_ip, src_port, dst_port, src_mac, dst_mac, net_type
-        )
+    for flow_index, flow in enumerate(traffic_flows):
+        # 解析网络参数
+        resolved_params = resolve_network_params(flow['network_params'])
 
         # 创建数据包构建器
-        packet_builder = PacketBuilder(
-            src_ip=random_params['src_ip'],
-            dst_ip=random_params['dst_ip'],
-            src_port=random_params['src_port'],
-            dst_port=random_params['dst_port'],
-            src_mac=random_params['src_mac'],
-            dst_mac=random_params['dst_mac'],
+        builder = PacketBuilder(
+            src_ip=resolved_params['src_ip'],
+            dst_ip=resolved_params['dst_ip'],
+            src_port=resolved_params['src_port'],
+            dst_port=resolved_params['dst_port'],
+            src_mac=resolved_params['src_mac'],
+            dst_mac=resolved_params['dst_mac'],
             interval=interval,
             interval_randomness=interval_rand,
             mtu=mtu,
-            is_keep_alive=keep_alive
+            is_keep_alive=keep_alive,
+            start_timestamp=current_timestamp
         )
 
-        # 读取和解析 JSON 文件
-        try:
-            with open(input_file_path, 'r', encoding='utf-8') as json_file:
-                json_data = json.load(json_file)
-        except FileNotFoundError:
-            print(f"错误: 文件不存在: {input_file_path}", file=sys.stderr)
-            failed_files.append((file_name, "文件不存在"))
-            continue
-        except json.JSONDecodeError as e:
-            print(f"错误: JSON 格式错误: {input_file_path}", file=sys.stderr)
-            failed_files.append((file_name, f"JSON 格式错误: {e}"))
-            continue
-        except Exception as e:
-            print(f"错误: 读取文件异常: {input_file_path}", file=sys.stderr)
-            failed_files.append((file_name, str(e)))
-            continue
-
-        # 提取 HTTP 流量
-        try:
-            http_flows = extract_http_flows_from_json(json_data, req_key, res_key)
-        except (ValueError, KeyError, binascii.Error, Exception) as e:
-            print(f"错误: HTTP 流量提取失败: {input_file_path}: {e}", file=sys.stderr)
-            failed_files.append((file_name, str(e)))
-            continue
-
         # 构建 TCP 数据包
-        try:
-            tcp_packets = packet_builder.build_tcp_packets(http_flows)
-        except Exception as e:
-            print(f"错误: TCP 数据包构建失败: {input_file_path}: {e}", file=sys.stderr)
-            failed_files.append((file_name, str(e)))
-            continue
+        flow_packets = builder.build_tcp_packets(flow['packets'])
+        all_packets.extend(flow_packets)
 
-        # 生成 PCAP 文件
-        pcap_file_path = os.path.splitext(output_file_path)[0] + '.pcap'
-        try:
-            wrpcap(pcap_file_path, tcp_packets)
-            print(f"成功: 生成 PCAP 文件: {pcap_file_path}")
-            success_files += 1
-        except Exception as e:
-            print(f"错误: 生成 PCAP 文件异常: {pcap_file_path}: {e}", file=sys.stderr)
-            failed_files.append((file_name, str(e)))
+        # 更新下一条流的起始时间戳
+        if flow_index < len(traffic_flows) - 1:
+            current_timestamp = builder.current_timestamp + flow_gap
 
-    # 输出统计
-    print(f"处理完成: 总文件数 {total_files}，成功 {success_files}，失败 {len(failed_files)}")
+    # 保存 PCAP 文件
+    wrpcap(output_path, all_packets)
+    print(f"成功: 生成 PCAP 文件: {output_path}")
+    print(f"总包数: {len(all_packets)} 包")
 
     return {
-        'total': total_files,
-        'success': success_files,
-        'failed': failed_files,
-        'output_path': output_path
+        'output_path': output_path,
+        'total_flows': len(traffic_flows),
+        'total_packets': len(all_packets)
     }
 
 
@@ -670,82 +511,61 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 单文件转换
   python pcap_build.py traffic.json
-
-  # 指定输出路径
   python pcap_build.py traffic.json -o output.pcap
 
-  # 目录批量处理
-  python pcap_build.py ./json_dir/ -o ./output/
+JSON 格式:
+  {
+    "options": {
+      "keep_alive": false,
+      "interval": 0.01,
+      "interval_randomness": 0.5,
+      "mtu": 1500,
+      "flow_gap": 0.5
+    },
+    "traffic_flows": [
+      {
+        "network_params": {
+          "src_ip": "10.0.0.1",
+          "dst_ip": "192.168.1.100",
+          "src_port": 54321,
+          "dst_port": 80
+        },
+        "packets": [
+          {"request_data_base64": "...", "response_data_base64": "..."}
+        ]
+      }
+    ]
+  }
 
-  # 使用网络类型预设
-  python pcap_build.py traffic.json --net-type lan-wan
+options 字段说明（全部可选）:
+  keep_alive: 长连接模式（默认: false）
+  interval: 包时间间隔/秒（默认: 0.01）
+  interval_randomness: 间隔随机度 0-1（默认: 0.5）
+  mtu: MTU 大小（默认: 1500）
+  flow_gap: TCP 连接之间的时间间隔/秒（默认: 0.5）
 
-  # 自定义网络参数
-  python pcap_build.py traffic.json --src-ip 10.0.0.1 --dst-ip 192.168.1.100 --dst-port 8080
-
-  # 长连接模式
-  python pcap_build.py traffic.json -k
-
-网络类型预设:
-  wan-lan: 外网 -> 内网（默认）
-  lan-wan: 内网 -> 外网
-  wan-wan: 外网 -> 外网
-  lan-lan: 内网 -> 内网
+特殊值说明:
+  src_ip/dst_ip: WAN (随机公网IP), LAN (随机私网IP)
+  src_port: CLIENT (随机客户端端口)
+  src_mac/dst_mac: RANDOM (随机MAC地址)
 """
     )
 
-    parser.add_argument("input_path", help="输入 JSON 文件或目录路径")
+    parser.add_argument("input_path", help="输入 JSON 文件路径")
     parser.add_argument("-o", "--output", default=None,
-                        help="输出路径（默认: {input}_{timestamp}）")
-    parser.add_argument("--req-key", default="request_data_base64",
-                        help="JSON 请求字段键（默认: request_data_base64）")
-    parser.add_argument("--res-key", default="response_data_base64",
-                        help="JSON 响应字段键（默认: response_data_base64）")
-    parser.add_argument("--net-type", default="wan-lan",
-                        choices=['wan-lan', 'lan-wan', 'wan-wan', 'lan-lan'],
-                        help="网络类型预设（默认: wan-lan）")
-    parser.add_argument("--src-ip", default=None,
-                        help="源 IP（IP 地址或 WAN/LAN）")
-    parser.add_argument("--dst-ip", default=None,
-                        help="目的 IP（IP 地址或 WAN/LAN）")
-    parser.add_argument("--src-port", type=int, default=None,
-                        help="源端口（默认: 随机）")
-    parser.add_argument("--dst-port", type=int, default=None,
-                        help="目的端口（默认: 80）")
-    parser.add_argument("--src-mac", default=None,
-                        help="源 MAC（默认: 随机）")
-    parser.add_argument("--dst-mac", default=None,
-                        help="目的 MAC（默认: 随机）")
-    parser.add_argument("-i", "--interval", type=float, default=0.01,
-                        help="包时间间隔/秒（默认: 0.01）")
-    parser.add_argument("--interval-rand", type=float, default=0.5,
-                        help="间隔随机度 0-1（默认: 0.5）")
-    parser.add_argument("-k", "--keep-alive", action="store_true",
-                        help="长连接模式")
-    parser.add_argument("--mtu", type=int, default=1500,
-                        help="MTU 大小（默认: 1500）")
+                        help="输出文件路径（默认: {input}_{timestamp}.pcap）")
 
     args = parser.parse_args()
 
-    build_pcap_from_json(
-        input_path=args.input_path,
-        output_path=args.output,
-        req_key=args.req_key,
-        res_key=args.res_key,
-        net_type=args.net_type,
-        src_ip=args.src_ip,
-        dst_ip=args.dst_ip,
-        src_port=args.src_port,
-        dst_port=args.dst_port,
-        src_mac=args.src_mac,
-        dst_mac=args.dst_mac,
-        interval=args.interval,
-        interval_rand=args.interval_rand,
-        keep_alive=args.keep_alive,
-        mtu=args.mtu
-    )
+    try:
+        build_pcap_from_json(
+            input_path=args.input_path,
+            output_path=args.output
+        )
+    except Exception as e:
+        print(f"错误: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
